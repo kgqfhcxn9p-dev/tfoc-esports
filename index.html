@@ -223,6 +223,25 @@
 
   .empty-state{padding:40px 20px; text-align:center; color:var(--gray-2); font-size:13.5px; border:1px dashed var(--gray-4);}
 
+  /* BANNED PLAYERS */
+  .banned-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px;}
+  .banned-card{padding:18px; display:flex; gap:14px; align-items:flex-start; position:relative; border-left:3px solid var(--red);}
+  .banned-photo{width:56px; height:56px; flex-shrink:0; border-radius:50%; overflow:hidden; background:var(--bg-2); box-shadow:0 0 0 1px var(--gray-4);}
+  .banned-photo img{width:100%; height:100%; object-fit:cover; display:block;}
+  .banned-photo .initial{width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-family:'Anton',sans-serif; font-size:20px; color:var(--gray-3);}
+  .banned-info .name{font-weight:700; font-size:14px; color:var(--ink);}
+  .banned-info .row{font-size:11.5px; color:var(--gray-2); margin-top:3px; font-family:'IBM Plex Mono',monospace;}
+  .banned-info .reason{font-size:11.5px; color:var(--red); margin-top:6px; line-height:1.4;}
+  .banned-del{position:absolute; top:8px; right:8px; background:var(--bg-2); color:var(--gray-2); border:1px solid var(--gray-4); width:22px; height:22px; font-size:12px; cursor:pointer; display:none;}
+  .mod-only .banned-del{display:block;}
+
+  /* TOURNAMENT OFFICIAL STATUS */
+  .tstatus-pill{font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:700; letter-spacing:1px; text-transform:uppercase; padding:4px 9px; border:none; cursor:default;}
+  .tstatus-pill.official{background:#132b16; color:#3ecb5e;}
+  .tstatus-pill.unofficial{background:#2b1414; color:#e35c5c;}
+  body.is-mod .tstatus-pill{cursor:pointer;}
+  body.is-mod .tstatus-pill:hover{filter:brightness(1.25);}
+
   /* roster */
   .roster-panel{margin-top:32px; padding:26px;}
   .roster-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;}
@@ -411,6 +430,7 @@
       <button data-tab="tournois" onclick="goTo('tournois')">Tournaments</button>
       <button data-tab="clubs" onclick="goTo('clubs')">Clans</button>
       <button data-tab="inscription" onclick="goTo('inscription')">Registration</button>
+      <button data-tab="banned" onclick="goTo('banned')">Banned Players</button>
       <button onclick="openModal('rulesModal')">Rules</button>
       <button onclick="openModal('mediaModal')">Media</button>
     </nav>
@@ -688,6 +708,32 @@
       <p class="form-note" style="margin-bottom:16px;">Once you've submitted your clan and its 2 players on the Google Form, confirm it here so the federation counters (registered clans / registered players) are updated on this site.</p>
       <button class="btn btn-red" onclick="confirmClanRegistration()">I've submitted the form — update the counters</button>
     </div>
+  </section>
+
+  <!-- BANNED PLAYERS -->
+  <section class="view" id="view-banned">
+    <div class="section-head">
+      <div>
+        <h2><span class="num">06</span> Banned Players</h2>
+        <p class="section-desc">Players suspended from TFOC competitions for rule violations.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm mod-only" onclick="toggleForm('bannedForm')">+ Add banned player</button>
+    </div>
+
+    <div class="card form-card mod-only" id="bannedForm" style="display:none; margin-bottom:24px;">
+      <div class="msg" id="bannedMsg"></div>
+      <div class="form-grid">
+        <div class="field"><label>Name</label><input id="bnName" placeholder="Full name"></div>
+        <div class="field"><label>Phone</label><input id="bnPhone" placeholder="E.g. 21 234 567"></div>
+        <div class="field"><label>Serial number</label><input id="bnSerial" placeholder="Serial number"></div>
+        <div class="field"><label>Reason (optional)</label><input id="bnReason" placeholder="E.g. Match-fixing, toxic behaviour..."></div>
+        <div class="field full"><label>Photo — upload from gallery</label><input id="bnPhotoFile" type="file" accept="image/*"></div>
+        <div class="field full"><label>Or paste a photo URL instead</label><input id="bnPhotoUrl" placeholder="https://..."></div>
+      </div>
+      <button class="btn btn-red btn-sm" onclick="submitBannedPlayer()">Add to banned list</button>
+    </div>
+
+    <div class="banned-grid" id="bannedGrid"><div class="loader">Loading banned players…</div></div>
   </section>
 
 </main>
@@ -1005,6 +1051,7 @@ let mediaExtra = [];   // {id, type:'photo'|'video', url, caption, date}
 let siteIntro = null;  // {heading, body}
 let modsList = [];     // {username, passHash}
 let currentUser = null; // {username, role:'owner'|'moderator'} — in-memory only, resets on reload
+let bannedPlayers = []; // {id, name, phone, serial, photo, reason, date}
 
 /* ===================== ROUTING ===================== */
 function goTo(tab){
@@ -1502,6 +1549,62 @@ function updateTpFieldsVisibility(){
   }
 }
 
+/* ===================== BANNED PLAYERS ===================== */
+function renderBanned(){
+  const grid = document.getElementById('bannedGrid');
+  if(!grid) return;
+  if(bannedPlayers.length===0){ grid.innerHTML = '<div class="empty-state">No banned players.</div>'; return; }
+  grid.innerHTML = bannedPlayers.map(b=>`
+    <div class="card banned-card">
+      <button class="banned-del" title="Remove" onclick="removeBannedPlayer('${b.id}')">×</button>
+      <div class="banned-photo">${b.photo ? `<img src="${b.photo}" alt="${escapeHtml(b.name)}">` : `<div class="initial">${escapeHtml((b.name||'?').charAt(0).toUpperCase())}</div>`}</div>
+      <div class="banned-info">
+        <div class="name">${escapeHtml(b.name)}</div>
+        <div class="row">📞 ${escapeHtml(b.phone||'—')}</div>
+        <div class="row">🔑 ${escapeHtml(b.serial||'—')}</div>
+        ${b.reason ? `<div class="reason">${escapeHtml(b.reason)}</div>` : ''}
+      </div>
+    </div>`).join('');
+}
+async function submitBannedPlayer(){
+  if(!requireMod('bannedMsg')) return;
+  const name = document.getElementById('bnName').value.trim();
+  const phone = document.getElementById('bnPhone').value.trim();
+  const serial = document.getElementById('bnSerial').value.trim();
+  const reason = document.getElementById('bnReason').value.trim();
+  const urlInput = document.getElementById('bnPhotoUrl').value.trim();
+  const fileInput = document.getElementById('bnPhotoFile');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+
+  if(!name){ showMsg('bannedMsg','Please enter at least the player\'s name.', false); return; }
+
+  let photo = '';
+  if(file){
+    try{ photo = await fileToCompressedImageDataUrl(file, 400, 0.8); }
+    catch(err){ showMsg('bannedMsg', err.message || 'Could not process that photo.', false); return; }
+  } else if(urlInput){
+    photo = urlInput;
+  }
+
+  const id = uid();
+  const item = {id, name, phone, serial, reason, photo, date:new Date().toISOString().slice(0,10)};
+  const ok = await sSet('banned:'+id, item);
+  if(ok){
+    bannedPlayers.unshift(item);
+    showMsg('bannedMsg', `${name} added to the banned list.`, true);
+    ['bnName','bnPhone','bnSerial','bnReason','bnPhotoUrl'].forEach(i=>document.getElementById(i).value='');
+    if(fileInput) fileInput.value='';
+    renderBanned();
+  } else { showMsg('bannedMsg','Failed to save — the photo may be too large. Try a smaller file or a URL instead.', false); }
+}
+async function removeBannedPlayer(id){
+  if(!isMod()) return;
+  if(!confirm('Remove this player from the banned list?')) return;
+  try{ await window.storage.delete('banned:'+id, true); }catch(e){}
+  bannedPlayers = bannedPlayers.filter(b=>b.id!==id);
+  renderBanned();
+}
+
 function renderTourneys(){
   const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
   const list = document.getElementById('tourneyList');
@@ -1516,6 +1619,7 @@ function renderTourneys(){
       <div class="tourney-meta">
         <span>📅 <b>${fmtDate(t.date)}</b></span>
         <span>🏆 <b>${escapeHtml(t.prizepool||'—')}</b></span>
+        <button class="tstatus-pill ${t.official ? 'official' : 'unofficial'}" onclick="toggleTourneyOfficial(${i})">${t.official ? 'Official' : 'Unofficial'}</button>
       </div>
       <div class="tourney-meta"><span>${escapeHtml(t.format||'')}</span></div>
       <p class="desc">${escapeHtml(t.description||'')}</p>
@@ -1525,6 +1629,28 @@ function renderTourneys(){
         <button class="btn btn-ghost btn-sm" onclick="openTourneyPosts('${tourneyTid(t)}')">Updates</button>
       </div>
     </div>`).join('');
+}
+async function toggleTourneyOfficial(index){
+  if(!isMod()){ alert('Only moderators can change a tournament\'s official status.'); return; }
+  const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
+  const t = all[index];
+  const newVal = !t.official;
+
+  if(t.__seed){
+    const newT = {...t, official:newVal};
+    delete newT.__seed;
+    const key = 'tourney:'+uid();
+    const ok = await sSet(key, newT);
+    if(ok){
+      newT.__id = key;
+      tourneyExtra.unshift(newT);
+      SEED_TOURNEYS.splice(SEED_TOURNEYS.findIndex(s=>s.name===t.name),1);
+    }
+  } else {
+    t.official = newVal;
+    if(t.__id) await sSet(t.__id, t);
+  }
+  renderTourneys();
 }
 async function registerClanToTourney(index){
   if(clans.length===0){ alert("No clan registered yet. Register your clan first in the Registration tab."); goTo('inscription'); return; }
@@ -1719,12 +1845,18 @@ async function loadAll(){
   const mods = await sGet('mods:list');
   modsList = mods || [];
 
+  const bannedKeys = await sListKeys('banned:');
+  bannedPlayers = [];
+  for(const k of bannedKeys){ const v = await sGet(k); if(v) bannedPlayers.push(v); }
+  bannedPlayers.sort((a,b)=> new Date(b.date)-new Date(a.date));
+
   renderNews();
   renderMercato();
   renderTourneys();
   renderClubs();
   renderAnnouncements();
   renderIntro();
+  renderBanned();
   updateTicker();
   updateStats();
   applyAccessUI();
