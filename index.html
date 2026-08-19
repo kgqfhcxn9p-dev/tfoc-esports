@@ -494,7 +494,7 @@
         <div class="field full" id="annUrlWrap"><label>Or paste a URL instead</label><input id="annUrl" placeholder="Image URL, or video URL / YouTube embed link"></div>
         <div class="field full" id="annTextWrap" style="display:none;"><label>Text</label><textarea id="annText" placeholder="Write your announcement..." style="min-height:110px;"></textarea></div>
       </div>
-      <p class="form-note" id="annHint">Pick a file from your device gallery, or leave it empty and paste a URL instead. Large videos may be too big to store directly — if upload fails, use a link (YouTube "embed" URL or a hosted .mp4) instead.</p>
+      <p class="form-note" id="annHint">For no size limit at all, paste a YouTube link (any format works, it's converted automatically) — only the link is stored. Uploading a file from your gallery works too, but photos get compressed and videos are capped at ~3MB due to storage limits.</p>
       <button class="btn btn-red btn-sm" onclick="submitAnnouncement()">Publish</button>
     </div>
     <div class="announce-grid" id="announceGrid"><div class="loader">Loading announcements…</div></div>
@@ -793,6 +793,42 @@
       <div class="field full"><label>Passcode</label><input id="loginPass" type="password" placeholder="Your passcode"></div>
       <button class="btn btn-red" style="margin-top:6px;" onclick="attemptLogin()">Log in</button>
       <p class="form-note" style="margin-top:14px;">Moderator access is granted by the TFOC federation admin. Contact your admin if you don't have credentials yet.</p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-shell" id="tourneyPostsModal" role="dialog" aria-modal="true" aria-labelledby="tourneyPostsTitle" onclick="closeFromBackdrop(event)">
+  <div class="modal-panel" style="max-width:760px;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-kicker">TFOC tournament</div>
+        <h2 id="tourneyPostsTitle">Tournament updates</h2>
+      </div>
+      <button class="modal-close" type="button" aria-label="Close updates" onclick="closeModal('tourneyPostsModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="card form-card mod-only" style="margin-bottom:20px;">
+        <div class="msg" id="tourneyPostMsg"></div>
+        <div class="form-grid">
+          <div class="field"><label>Type</label>
+            <select id="tpType" onchange="updateTpFieldsVisibility()">
+              <option value="photo">Photo</option>
+              <option value="video">Video</option>
+              <option value="text">Text</option>
+            </select>
+          </div>
+          <div class="field"><label>Caption / title</label><input id="tpCaption" placeholder="E.g. Matchday 1 results"></div>
+          <div class="field full" id="tpFileWrap">
+            <label>Upload from gallery</label>
+            <input id="tpFile" type="file" accept="image/*">
+          </div>
+          <div class="field full" id="tpUrlWrap"><label>Or paste a URL instead</label><input id="tpUrl" placeholder="Image URL, or YouTube video link"></div>
+          <div class="field full" id="tpTextWrap" style="display:none;"><label>Text</label><textarea id="tpText" placeholder="Write an update..." style="min-height:100px;"></textarea></div>
+        </div>
+        <p class="form-note" id="tpHint">Upload a photo from your gallery (compressed automatically), or paste an image URL for no size limit at all.</p>
+        <button class="btn btn-red btn-sm" onclick="submitTourneyPost()">Publish update</button>
+      </div>
+      <div class="announce-grid" id="tourneyPostsGrid"><div class="loader">Loading updates…</div></div>
     </div>
   </div>
 </div>
@@ -1140,11 +1176,11 @@ async function submitIntro(){
 }
 
 /* ===================== HOME: ANNOUNCEMENTS (photos/videos) ===================== */
-function announceCardHtml(item){
+function mediaCardHtml(item, deleteFn){
   if(item.type === 'text'){
     return `
       <div class="announce-card text-card">
-        <button class="announce-del" title="Remove" onclick="deleteAnnouncement('${item.id}')">×</button>
+        <button class="announce-del" title="Remove" onclick="${deleteFn}('${item.id}')">×</button>
         <span class="text-card-date mono">${fmtDate(item.date)}</span>
         <h4>${escapeHtml(item.caption||'Announcement')}</h4>
         <p>${escapeHtml(item.body||'')}</p>
@@ -1165,10 +1201,11 @@ function announceCardHtml(item){
     <div class="announce-card">
       ${isVideo ? '<span class="play-badge">VIDEO</span>' : ''}
       ${mediaTag}
-      <button class="announce-del" title="Remove" onclick="deleteAnnouncement('${item.id}')">×</button>
+      <button class="announce-del" title="Remove" onclick="${deleteFn}('${item.id}')">×</button>
       <div class="announce-caption"><span>${fmtDate(item.date)}</span><h4>${escapeHtml(item.caption||'Untitled')}</h4></div>
     </div>`;
 }
+function announceCardHtml(item){ return mediaCardHtml(item, 'deleteAnnouncement'); }
 function renderAnnouncements(){
   const grid = document.getElementById('announceGrid');
   if(!grid) return;
@@ -1192,7 +1229,9 @@ function updateAnnFieldsVisibility(){
     urlWrap.style.display = 'flex';
     textWrap.style.display = 'none';
     if(fileInput) fileInput.accept = type === 'video' ? 'video/*' : 'image/*';
-    hint.textContent = 'Pick a file from your device gallery, or leave it empty and paste a URL instead. Large videos may be too big to store directly — if upload fails, use a link (YouTube "embed" URL or a hosted .mp4) instead.';
+    hint.textContent = type === 'video'
+      ? 'For no size limit at all, paste a YouTube link (converted automatically) — only the link is stored, any length works. Direct upload from gallery is capped at ~3MB.'
+      : 'Upload a photo from your gallery (compressed automatically), or paste an image URL for no size limit at all.';
   }
 }
 
@@ -1222,12 +1261,15 @@ function fileToCompressedImageDataUrl(file, maxDim, quality){
   });
 }
 
-/* Videos can't be compressed in-browser without heavy libraries, so just cap the raw file size. */
+/* Videos can't be compressed in-browser without heavy libraries, so just cap the raw file size.
+   Storage has a hard 5MB-per-item ceiling, and base64 encoding inflates size by ~33%, so the
+   safe raw-file cap is well under 5MB — this is why a YouTube link (below) is the real
+   "no size limit" option for video, since only the link text gets stored, not the file. */
 function fileToVideoDataUrl(file, maxBytes){
-  maxBytes = maxBytes || 4 * 1024 * 1024;
+  maxBytes = maxBytes || 3 * 1024 * 1024; // ~3MB raw -> ~4MB stored after base64, safely under the 5MB cap
   return new Promise((resolve, reject)=>{
     if(file.size > maxBytes){
-      reject(new Error('This video is too large to upload directly (max ~4MB). Trim it, or paste a video link instead.'));
+      reject(new Error('This video is too large to upload directly (max ~3MB raw file). For any length/size video with no limit at all, paste a YouTube link instead.'));
       return;
     }
     const reader = new FileReader();
@@ -1235,6 +1277,12 @@ function fileToVideoDataUrl(file, maxBytes){
     reader.onload = (e) => resolve(e.target.result);
     reader.readAsDataURL(file);
   });
+}
+function normalizeVideoUrl(url){
+  // Convert common YouTube URL formats into an embeddable URL automatically.
+  const watch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  if(watch) return `https://www.youtube.com/embed/${watch[1]}`;
+  return url;
 }
 
 async function submitAnnouncement(){
@@ -1259,7 +1307,7 @@ async function submitAnnouncement(){
       return;
     }
   } else if(urlInput){
-    finalUrl = urlInput;
+    finalUrl = type === 'video' ? normalizeVideoUrl(urlInput) : urlInput;
   } else {
     showMsg('announceMsg','Choose a file from your gallery, or paste a URL.', false);
     return;
@@ -1358,10 +1406,102 @@ async function submitMercato(){
 }
 
 /* ===================== RENDER: TOURNAMENTS ===================== */
-function tourneyTid(t){ return t.id || t.__id; }
+function slugify(s){ return (s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''); }
+function tourneyTid(t){ return t.id || t.__id || ('seed-'+slugify(t.name)); }
+
+let currentTourneyId = null;
+let tourneyPosts = []; // in-memory cache for the currently open tournament's posts
+
 function openTourneyPosts(tid){
-  alert('Tournament updates/posts are coming soon.');
+  currentTourneyId = tid;
+  const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
+  const t = all.find(x=>tourneyTid(x)===tid);
+  document.getElementById('tourneyPostsTitle').textContent = t ? t.name + ' — Updates' : 'Tournament updates';
+  openModal('tourneyPostsModal');
+  loadTourneyPosts(tid);
 }
+async function loadTourneyPosts(tid){
+  const grid = document.getElementById('tourneyPostsGrid');
+  grid.innerHTML = '<div class="loader">Loading updates…</div>';
+  const keys = await sListKeys('tpost:'+tid+':');
+  tourneyPosts = [];
+  for(const k of keys){ const v = await sGet(k); if(v) tourneyPosts.push(v); }
+  tourneyPosts.sort((a,b)=> new Date(b.date)-new Date(a.date));
+  renderTourneyPosts();
+}
+function renderTourneyPosts(){
+  const grid = document.getElementById('tourneyPostsGrid');
+  if(!grid) return;
+  if(tourneyPosts.length===0){ grid.innerHTML = '<div class="empty-state">No updates published for this tournament yet.</div>'; return; }
+  grid.innerHTML = tourneyPosts.map(p=>mediaCardHtml(p, 'deleteTourneyPost')).join('');
+}
+async function submitTourneyPost(){
+  if(!requireMod('tourneyPostMsg')) return;
+  if(!currentTourneyId) return;
+  const type = document.getElementById('tpType').value;
+  const caption = document.getElementById('tpCaption').value.trim();
+  const urlInput = document.getElementById('tpUrl').value.trim();
+  const fileInput = document.getElementById('tpFile');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+
+  let finalUrl = '';
+  let bodyText = '';
+
+  if(type === 'text'){
+    bodyText = document.getElementById('tpText').value.trim();
+    if(!caption && !bodyText){ showMsg('tourneyPostMsg','Write a title or some text.', false); return; }
+  } else if(file){
+    try{
+      finalUrl = type === 'video' ? await fileToVideoDataUrl(file) : await fileToCompressedImageDataUrl(file);
+    }catch(err){
+      showMsg('tourneyPostMsg', err.message || 'Could not process that file.', false);
+      return;
+    }
+  } else if(urlInput){
+    finalUrl = type === 'video' ? normalizeVideoUrl(urlInput) : urlInput;
+  } else {
+    showMsg('tourneyPostMsg','Choose a file from your gallery, or paste a URL.', false);
+    return;
+  }
+
+  const id = uid();
+  const item = {id, type, url:finalUrl, body:bodyText, caption, date:new Date().toISOString().slice(0,10)};
+  const ok = await sSet('tpost:'+currentTourneyId+':'+id, item);
+  if(ok){
+    tourneyPosts.unshift(item);
+    showMsg('tourneyPostMsg','Published.', true);
+    document.getElementById('tpCaption').value=''; document.getElementById('tpUrl').value='';
+    const textEl = document.getElementById('tpText'); if(textEl) textEl.value='';
+    if(fileInput) fileInput.value='';
+    renderTourneyPosts();
+  } else { showMsg('tourneyPostMsg','Failed to publish — the file may be too large for storage. Try a smaller file or a URL instead.', false); }
+}
+async function deleteTourneyPost(id){
+  if(!isMod() || !currentTourneyId) return;
+  if(!confirm('Remove this update?')) return;
+  try{ await window.storage.delete('tpost:'+currentTourneyId+':'+id, true); }catch(e){}
+  tourneyPosts = tourneyPosts.filter(p=>p.id!==id);
+  renderTourneyPosts();
+}
+function updateTpFieldsVisibility(){
+  const type = document.getElementById('tpType').value;
+  const fileInput = document.getElementById('tpFile');
+  const fileWrap = document.getElementById('tpFileWrap');
+  const urlWrap = document.getElementById('tpUrlWrap');
+  const textWrap = document.getElementById('tpTextWrap');
+  const hint = document.getElementById('tpHint');
+  if(type === 'text'){
+    fileWrap.style.display = 'none'; urlWrap.style.display = 'none'; textWrap.style.display = 'block';
+    hint.textContent = 'This will publish as a text-only update, no photo or video needed.';
+  } else {
+    fileWrap.style.display = 'flex'; urlWrap.style.display = 'flex'; textWrap.style.display = 'none';
+    if(fileInput) fileInput.accept = type === 'video' ? 'video/*' : 'image/*';
+    hint.textContent = type === 'video'
+      ? 'For no size limit at all, paste a YouTube link (converted automatically). Direct upload from gallery is capped at ~3MB.'
+      : 'Upload a photo from your gallery (compressed automatically), or paste an image URL for no size limit at all.';
+  }
+}
+
 function renderTourneys(){
   const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
   const list = document.getElementById('tourneyList');
