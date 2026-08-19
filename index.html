@@ -892,13 +892,40 @@
 <iframe name="tfc-google-sync-frame" style="display:none;" title="sync"></iframe>
 <script>
 /* ===================== STORAGE HELPERS ===================== */
+let lastStorageError = null; // set by sSet() on failure, for accurate error messages
+
 async function sGet(key){
   try{ const r = await window.storage.get(key, true); return r ? JSON.parse(r.value) : null; }
   catch(e){ return null; }
 }
 async function sSet(key, value){
-  try{ await window.storage.set(key, JSON.stringify(value), true); return true; }
-  catch(e){ console.error('storage set failed', e); return false; }
+  lastStorageError = null;
+  if(typeof window === 'undefined' || !window.storage){
+    lastStorageError = 'unavailable';
+    console.error('window.storage is not available in this context.');
+    return false;
+  }
+  let str;
+  try{ str = JSON.stringify(value); }
+  catch(e){ lastStorageError = 'serialize'; return false; }
+  if(str.length > 4700000){ // ~4.7MB, safe margin under the platform's 5MB-per-item hard cap
+    lastStorageError = 'too-large';
+    return false;
+  }
+  try{
+    await window.storage.set(key, str, true);
+    return true;
+  }catch(e){
+    console.error('storage set failed', e);
+    lastStorageError = (e && e.message) ? e.message : 'unknown';
+    return false;
+  }
+}
+function storageErrorMessage(){
+  if(lastStorageError === 'unavailable') return "This only works on the live site inside Claude — if you downloaded/opened this HTML file directly in your browser, publishing won't work there. Open it from the Claude chat/artifact instead.";
+  if(lastStorageError === 'too-large') return 'That file is still too large for storage even after compression. Try a smaller image, or paste a URL instead.';
+  if(lastStorageError) return 'Failed to publish (' + lastStorageError + '). Please try again.';
+  return 'Failed, please try again.';
 }
 async function sListKeys(prefix){
   try{ const r = await window.storage.list(prefix, true); return (r && r.keys) ? r.keys : []; }
@@ -997,14 +1024,14 @@ async function submitClanByMod(){
     clan.name = name; clan.tag = tag;
     if(logo) clan.logo = logo;
     const ok = await sSet('clan:'+editId, clan);
-    if(!ok){ showMsg('modClanMsg','Failed to save, please try again.', false); return; }
+    if(!ok){ showMsg('modClanMsg', storageErrorMessage(), false); return; }
     showMsg('modClanMsg', `Clan "${name}" updated.`, true);
   } else {
     const id = uid();
     const clanItem = {id, name, tag, admin:'', coAdmin:'', createdAt:new Date().toISOString().slice(0,10)};
     if(logo) clanItem.logo = logo;
     const ok = await sSet('clan:'+id, clanItem);
-    if(!ok){ showMsg('modClanMsg','Failed to save, please try again.', false); return; }
+    if(!ok){ showMsg('modClanMsg', storageErrorMessage(), false); return; }
     clans.push(clanItem);
     showMsg('modClanMsg', `Clan "${name}" added.`, true);
   }
@@ -1186,7 +1213,7 @@ async function addModerator(){
     showMsg('modsMsg', `Moderator "${username}" added.`, true);
     document.getElementById('newModUser').value=''; document.getElementById('newModPass').value='';
     renderModsList();
-  } else { showMsg('modsMsg','Failed to save, please try again.', false); }
+  } else { showMsg('modsMsg', storageErrorMessage(), false); }
 }
 async function removeModerator(index){
   if(!isOwner()) return;
@@ -1219,7 +1246,7 @@ async function submitIntro(){
     showMsg('introMsg','Saved.', true);
     renderIntro();
     setTimeout(()=>{ document.getElementById('introForm').style.display='none'; }, 500);
-  } else { showMsg('introMsg','Failed, please try again.', false); }
+  } else { showMsg('introMsg', storageErrorMessage(), false); }
 }
 
 /* ===================== HOME: ANNOUNCEMENTS (photos/videos) ===================== */
@@ -1370,7 +1397,7 @@ async function submitAnnouncement(){
     const textEl = document.getElementById('annText'); if(textEl) textEl.value='';
     if(fileInput) fileInput.value='';
     renderAnnouncements();
-  } else { showMsg('announceMsg','Failed to publish — the file may be too large for storage. Try a smaller file or a URL instead.', false); }
+  } else { showMsg('announceMsg', storageErrorMessage(), false); }
 }
 async function deleteAnnouncement(id){
   if(!isMod()) return;
@@ -1521,7 +1548,7 @@ async function submitTourneyPost(){
     const textEl = document.getElementById('tpText'); if(textEl) textEl.value='';
     if(fileInput) fileInput.value='';
     renderTourneyPosts();
-  } else { showMsg('tourneyPostMsg','Failed to publish — the file may be too large for storage. Try a smaller file or a URL instead.', false); }
+  } else { showMsg('tourneyPostMsg', storageErrorMessage(), false); }
 }
 async function deleteTourneyPost(id){
   if(!isMod() || !currentTourneyId) return;
@@ -1595,7 +1622,7 @@ async function submitBannedPlayer(){
     ['bnName','bnPhone','bnSerial','bnReason','bnPhotoUrl'].forEach(i=>document.getElementById(i).value='');
     if(fileInput) fileInput.value='';
     renderBanned();
-  } else { showMsg('bannedMsg','Failed to save — the photo may be too large. Try a smaller file or a URL instead.', false); }
+  } else { showMsg('bannedMsg', storageErrorMessage(), false); }
 }
 async function removeBannedPlayer(id){
   if(!isMod()) return;
