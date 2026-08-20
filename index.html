@@ -406,6 +406,7 @@
   .mods-row .mono{color:var(--gray-2); font-size:11px;}
   .mods-row button{background:none; border:none; color:var(--red); cursor:pointer; font-size:12px; font-family:'IBM Plex Mono',monospace;}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
 
@@ -891,47 +892,106 @@
 
 <iframe name="tfc-google-sync-frame" style="display:none;" title="sync"></iframe>
 <script>
-/* ===================== STORAGE HELPERS ===================== */
-let lastStorageError = null; // set by sSet() on failure, for accurate error messages
+/* ===================== SUPABASE SETUP ===================== */
+const SUPABASE_URL = "https://jxuhpdssmevlhvmhzbsl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_0Cn29HWr-eMbU_tqYVbVuA_ie9InLoI";
+const supabase = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+/* ===================== STORAGE HELPERS =====================
+   Generic key/value store backed by a single Postgres table (app_kv),
+   mirroring the old window.storage.get/set/list/delete API so the rest
+   of the app's logic (key naming, prefixes, etc.) didn't need to change.
+================================================================ */
+let lastStorageError = null; // set on failure, for accurate error messages
 
 async function sGet(key){
-  try{ const r = await window.storage.get(key, true); return r ? JSON.parse(r.value) : null; }
-  catch(e){ return null; }
+  try{
+    const {data, error} = await supabase.from('app_kv').select('value').eq('key', key).maybeSingle();
+    if(error) throw error;
+    return data ? data.value : null;
+  }catch(e){ console.error('sGet failed', e); return null; }
 }
 async function sSet(key, value){
   lastStorageError = null;
-  if(typeof window === 'undefined' || !window.storage){
-    lastStorageError = 'unavailable';
-    console.error('window.storage is not available in this context.');
-    return false;
-  }
-  let str;
-  try{ str = JSON.stringify(value); }
-  catch(e){ lastStorageError = 'serialize'; return false; }
-  if(str.length > 4700000){ // ~4.7MB, safe margin under the platform's 5MB-per-item hard cap
-    lastStorageError = 'too-large';
-    return false;
-  }
+  if(!supabase){ lastStorageError = 'unavailable'; return false; }
   try{
-    await window.storage.set(key, str, true);
+    const {error} = await supabase.from('app_kv').upsert({key, value}, {onConflict:'key'});
+    if(error) throw error;
     return true;
   }catch(e){
-    console.error('storage set failed', e);
+    console.error('sSet failed', e);
     lastStorageError = (e && e.message) ? e.message : 'unknown';
     return false;
   }
 }
+async function sDelete(key){
+  try{ await supabase.from('app_kv').delete().eq('key', key); }
+  catch(e){ console.error('sDelete failed', e); }
+}
+async function sListKeys(prefix){
+  try{
+    const {data, error} = await supabase.from('app_kv').select('key').like('key', prefix+'%');
+    if(error) throw error;
+    return (data || []).map(r=>r.key);
+  }catch(e){ console.error('sListKeys failed', e); return []; }
+}
 function storageErrorMessage(){
-  if(lastStorageError === 'unavailable') return "This only works on the live site inside Claude — if you downloaded/opened this HTML file directly in your browser, publishing won't work there. Open it from the Claude chat/artifact instead.";
-  if(lastStorageError === 'too-large') return 'That file is still too large for storage even after compression. Try a smaller image, or paste a URL instead.';
+  if(lastStorageError === 'unavailable') return "Could not connect to the database. Check your internet connection and try again.";
   if(lastStorageError) return 'Failed to publish (' + lastStorageError + '). Please try again.';
   return 'Failed, please try again.';
 }
-async function sListKeys(prefix){
-  try{ const r = await window.storage.list(prefix, true); return (r && r.keys) ? r.keys : []; }
-  catch(e){ return []; }
-}
+
+/* ===================== FILE UPLOADS (Supabase Storage) =====================
+   Files are uploaded to the "media" storage bucket and only the resulting
+   public URL is stored in the database — this removes the old size limit
+   almost entirely (bucket default cap is 50MB per file, configurable higher
+   in Supabase project settings if needed).
+================================================================ */
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+function compressImageToBlob(file, maxDim, quality){
+  maxDim = maxDim || 1600; quality = quality || 0.85;
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the file.'));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Could not read that image.'));
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if(w > maxDim || h > maxDim){
+          if(w > h){ h = Math.round(h * maxDim/w); w = maxDim; } else { w = Math.round(w * maxDim/h); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not compress that image.')), 'image/jpeg', quality);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function uploadToBucket(blob, folder, ext){
+  if(!supabase) throw new Error('Storage is not connected.');
+  const path = `${folder}/${uid()}.${ext}`;
+  const {error} = await supabase.storage.from('media').upload(path, blob, {upsert:false, contentType: blob.type || undefined});
+  if(error) throw new Error(error.message || 'Upload failed.');
+  const {data} = supabase.storage.from('media').getPublicUrl(path);
+  return data.publicUrl;
+}
+async function uploadImage(file, folder, maxDim, quality){
+  const blob = await compressImageToBlob(file, maxDim, quality);
+  return uploadToBucket(blob, folder, 'jpg');
+}
+async function uploadVideo(file, folder, maxBytes){
+  maxBytes = maxBytes || 50 * 1024 * 1024; // 50MB default Supabase bucket cap
+  if(file.size > maxBytes){
+    throw new Error(`This video is too large (max ${Math.round(maxBytes/1024/1024)}MB). For no limit at all, paste a YouTube link instead.`);
+  }
+  const ext = (file.name.split('.').pop() || 'mp4').toLowerCase();
+  return uploadToBucket(file, folder, ext);
+}
 
 /* ===================== GOOGLE FORM REGISTRATION =====================
    Clan registration now happens directly on the TFOC's official Google
@@ -992,7 +1052,7 @@ async function deleteClanByMod(id){
   const clan = clans.find(c=>c.id===id);
   if(!clan) return;
   if(!confirm(`Remove clan "${clan.name}"? This won't remove its already-registered players.`)) return;
-  try{ await window.storage.delete('clan:'+id, true); }catch(e){}
+  await sDelete('clan:'+id);
   clans = clans.filter(c=>c.id!==id);
   if(selectedClanId===id){ selectedClanId = null; document.getElementById('rosterPanel').style.display='none'; }
   renderClubs();
@@ -1012,8 +1072,8 @@ async function submitClanByMod(){
 
   let logo;
   if(file){
-    try{ logo = await fileToCompressedImageDataUrl(file, 400, 0.8); }
-    catch(err){ showMsg('modClanMsg', err.message || 'Could not process that logo image.', false); return; }
+    try{ logo = await uploadImage(file, 'clan-logos', 500, 0.85); }
+    catch(err){ showMsg('modClanMsg', err.message || 'Could not upload that logo image.', false); return; }
   } else if(urlInput){
     logo = urlInput;
   }
@@ -1310,48 +1370,6 @@ function updateAnnFieldsVisibility(){
 }
 
 /* Compress an image file down to a data URI small enough for storage (~5MB/key limit). */
-function fileToCompressedImageDataUrl(file, maxDim, quality){
-  maxDim = maxDim || 1280; quality = quality || 0.75;
-  return new Promise((resolve, reject)=>{
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Could not read the file.'));
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Could not read the image.'));
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        if(w > maxDim || h > maxDim){
-          if(w > h){ h = Math.round(h * maxDim / w); w = maxDim; }
-          else { w = Math.round(w * maxDim / h); h = maxDim; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-/* Videos can't be compressed in-browser without heavy libraries, so just cap the raw file size.
-   Storage has a hard 5MB-per-item ceiling, and base64 encoding inflates size by ~33%, so the
-   safe raw-file cap is well under 5MB — this is why a YouTube link (below) is the real
-   "no size limit" option for video, since only the link text gets stored, not the file. */
-function fileToVideoDataUrl(file, maxBytes){
-  maxBytes = maxBytes || 3 * 1024 * 1024; // ~3MB raw -> ~4MB stored after base64, safely under the 5MB cap
-  return new Promise((resolve, reject)=>{
-    if(file.size > maxBytes){
-      reject(new Error('This video is too large to upload directly (max ~3MB raw file). For any length/size video with no limit at all, paste a YouTube link instead.'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Could not read the file.'));
-    reader.onload = (e) => resolve(e.target.result);
-    reader.readAsDataURL(file);
-  });
-}
 function normalizeVideoUrl(url){
   // Convert common YouTube URL formats into an embeddable URL automatically.
   const watch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
@@ -1375,9 +1393,9 @@ async function submitAnnouncement(){
     if(!caption && !bodyText){ showMsg('announceMsg','Write a title or some text.', false); return; }
   } else if(file){
     try{
-      finalUrl = type === 'video' ? await fileToVideoDataUrl(file) : await fileToCompressedImageDataUrl(file);
+      finalUrl = type === 'video' ? await uploadVideo(file, 'announcements') : await uploadImage(file, 'announcements');
     }catch(err){
-      showMsg('announceMsg', err.message || 'Could not process that file.', false);
+      showMsg('announceMsg', err.message || 'Could not upload that file.', false);
       return;
     }
   } else if(urlInput){
@@ -1402,7 +1420,7 @@ async function submitAnnouncement(){
 async function deleteAnnouncement(id){
   if(!isMod()) return;
   if(!confirm('Remove this announcement?')) return;
-  try{ await window.storage.delete('media:'+id, true); }catch(e){}
+  await sDelete('media:'+id);
   mediaExtra = mediaExtra.filter(m=>m.id!==id);
   renderAnnouncements();
 }
@@ -1526,9 +1544,9 @@ async function submitTourneyPost(){
     if(!caption && !bodyText){ showMsg('tourneyPostMsg','Write a title or some text.', false); return; }
   } else if(file){
     try{
-      finalUrl = type === 'video' ? await fileToVideoDataUrl(file) : await fileToCompressedImageDataUrl(file);
+      finalUrl = type === 'video' ? await uploadVideo(file, 'tourney-posts') : await uploadImage(file, 'tourney-posts');
     }catch(err){
-      showMsg('tourneyPostMsg', err.message || 'Could not process that file.', false);
+      showMsg('tourneyPostMsg', err.message || 'Could not upload that file.', false);
       return;
     }
   } else if(urlInput){
@@ -1553,7 +1571,7 @@ async function submitTourneyPost(){
 async function deleteTourneyPost(id){
   if(!isMod() || !currentTourneyId) return;
   if(!confirm('Remove this update?')) return;
-  try{ await window.storage.delete('tpost:'+currentTourneyId+':'+id, true); }catch(e){}
+  await sDelete('tpost:'+currentTourneyId+':'+id);
   tourneyPosts = tourneyPosts.filter(p=>p.id!==id);
   renderTourneyPosts();
 }
@@ -1607,8 +1625,8 @@ async function submitBannedPlayer(){
 
   let photo = '';
   if(file){
-    try{ photo = await fileToCompressedImageDataUrl(file, 400, 0.8); }
-    catch(err){ showMsg('bannedMsg', err.message || 'Could not process that photo.', false); return; }
+    try{ photo = await uploadImage(file, 'banned-players', 500, 0.85); }
+    catch(err){ showMsg('bannedMsg', err.message || 'Could not upload that photo.', false); return; }
   } else if(urlInput){
     photo = urlInput;
   }
@@ -1627,7 +1645,7 @@ async function submitBannedPlayer(){
 async function removeBannedPlayer(id){
   if(!isMod()) return;
   if(!confirm('Remove this player from the banned list?')) return;
-  try{ await window.storage.delete('banned:'+id, true); }catch(e){}
+  await sDelete('banned:'+id);
   bannedPlayers = bannedPlayers.filter(b=>b.id!==id);
   renderBanned();
 }
