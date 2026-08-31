@@ -925,7 +925,7 @@
 /* ===================== SUPABASE SETUP ===================== */
 const SUPABASE_URL = "https://jxuhpdssmevlhvmhzbsl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_0Cn29HWr-eMbU_tqYVbVuA_ie9InLoI";
-const supabase = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 /* ===================== STORAGE HELPERS =====================
    Generic key/value store backed by a single Postgres table (app_kv),
@@ -936,16 +936,16 @@ let lastStorageError = null; // set on failure, for accurate error messages
 
 async function sGet(key){
   try{
-    const {data, error} = await supabase.from('app_kv').select('value').eq('key', key).maybeSingle();
+    const {data, error} = await supabaseClient.from('app_kv').select('value').eq('key', key).maybeSingle();
     if(error) throw error;
     return data ? data.value : null;
   }catch(e){ console.error('sGet failed', e); return null; }
 }
 async function sSet(key, value){
   lastStorageError = null;
-  if(!supabase){ lastStorageError = 'unavailable'; return false; }
+  if(!supabaseClient){ lastStorageError = 'unavailable'; return false; }
   try{
-    const {error} = await supabase.from('app_kv').upsert({key, value}, {onConflict:'key'});
+    const {error} = await supabaseClient.from('app_kv').upsert({key, value}, {onConflict:'key'});
     if(error) throw error;
     return true;
   }catch(e){
@@ -955,12 +955,12 @@ async function sSet(key, value){
   }
 }
 async function sDelete(key){
-  try{ await supabase.from('app_kv').delete().eq('key', key); }
+  try{ await supabaseClient.from('app_kv').delete().eq('key', key); }
   catch(e){ console.error('sDelete failed', e); }
 }
 async function sListKeys(prefix){
   try{
-    const {data, error} = await supabase.from('app_kv').select('key').like('key', prefix+'%');
+    const {data, error} = await supabaseClient.from('app_kv').select('key').like('key', prefix+'%');
     if(error) throw error;
     return (data || []).map(r=>r.key);
   }catch(e){ console.error('sListKeys failed', e); return []; }
@@ -1003,11 +1003,11 @@ function compressImageToBlob(file, maxDim, quality){
   });
 }
 async function uploadToBucket(blob, folder, ext){
-  if(!supabase) throw new Error('Storage is not connected.');
+  if(!supabaseClient) throw new Error('Storage is not connected.');
   const path = `${folder}/${uid()}.${ext}`;
-  const {error} = await supabase.storage.from('media').upload(path, blob, {upsert:false, contentType: blob.type || undefined});
+  const {error} = await supabaseClient.storage.from('media').upload(path, blob, {upsert:false, contentType: blob.type || undefined});
   if(error) throw new Error(error.message || 'Upload failed.');
-  const {data} = supabase.storage.from('media').getPublicUrl(path);
+  const {data} = supabaseClient.storage.from('media').getPublicUrl(path);
   return data.publicUrl;
 }
 async function uploadImage(file, folder, maxDim, quality){
