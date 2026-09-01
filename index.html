@@ -522,6 +522,7 @@
 
     <div class="card mods-panel owner-only" id="modsPanel">
       <h4>Manage moderators</h4>
+      <p class="form-note" style="margin-bottom:14px;">Each moderator account is bound to the first device it logs in from. Use "Reset device" to let them log in from a new device.</p>
       <div class="mods-list" id="modsList"></div>
       <div class="msg" id="modsMsg"></div>
       <div class="form-grid">
@@ -529,6 +530,12 @@
         <div class="field"><label>Passcode</label><input id="newModPass" placeholder="Passcode"></div>
       </div>
       <button class="btn btn-red btn-sm" onclick="addModerator()">Add moderator</button>
+    </div>
+
+    <div class="card mods-panel owner-only" id="activityPanel">
+      <h4>Moderator activity log</h4>
+      <p class="form-note" style="margin-bottom:14px;">Who visited and what they published, most recent first.</p>
+      <div id="activityLogList"><div class="loader">Loading activity…</div></div>
     </div>
 
     <div class="card form-card" id="newsForm" style="display:none; margin-bottom:28px;">
@@ -1067,7 +1074,7 @@ function resetModClanForm(){
   document.getElementById('modClanMsg').style.display = 'none';
 }
 function editClanByMod(id){
-  if(!isMod()) return;
+  if(!requirePermission('clans')) return;
   const clan = clans.find(c=>c.id===id);
   if(!clan) return;
   document.getElementById('modClanEditId').value = id;
@@ -1078,7 +1085,7 @@ function editClanByMod(id){
   document.getElementById('modClanForm').scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 async function deleteClanByMod(id){
-  if(!isMod()) return;
+  if(!requirePermission('clans')) return;
   const clan = clans.find(c=>c.id===id);
   if(!clan) return;
   if(!confirm(`Remove clan "${clan.name}"? This won't remove its already-registered players.`)) return;
@@ -1087,9 +1094,10 @@ async function deleteClanByMod(id){
   if(selectedClanId===id){ selectedClanId = null; document.getElementById('rosterPanel').style.display='none'; }
   renderClubs();
   updateStats();
+  logActivity(`Deleted clan "${clan.name}"`);
 }
 async function submitClanByMod(){
-  if(!requireMod('modClanMsg')) return;
+  if(!requirePermission('clans', 'modClanMsg')) return;
   const editId = document.getElementById('modClanEditId').value;
   const name = document.getElementById('modClanName').value.trim();
   const tag = document.getElementById('modClanTag').value.trim().toUpperCase();
@@ -1116,6 +1124,7 @@ async function submitClanByMod(){
     const ok = await sSet('clan:'+editId, clan);
     if(!ok){ showMsg('modClanMsg', storageErrorMessage(), false); return; }
     showMsg('modClanMsg', `Clan "${name}" updated.`, true);
+    logActivity(`Updated clan "${name}"`);
   } else {
     const id = uid();
     const clanItem = {id, name, tag, admin:'', coAdmin:'', createdAt:new Date().toISOString().slice(0,10)};
@@ -1124,6 +1133,7 @@ async function submitClanByMod(){
     if(!ok){ showMsg('modClanMsg', storageErrorMessage(), false); return; }
     clans.push(clanItem);
     showMsg('modClanMsg', `Clan "${name}" added.`, true);
+    logActivity(`Added clan "${name}"`);
   }
   resetModClanForm();
   document.getElementById('modClanForm').style.display = 'none';
@@ -1166,8 +1176,9 @@ let tourneyExtra = [];
 let selectedClanId = null;
 let mediaExtra = [];   // {id, type:'photo'|'video', url, caption, date}
 let siteIntro = null;  // {heading, body}
-let modsList = [];     // {username, passHash}
-let currentUser = null; // {username, role:'owner'|'moderator'} — in-memory only, resets on reload
+let modsList = [];     // {username, passHash, permissions, boundDevice}
+let activityLog = [];  // {username, role, action, date}
+let currentUser = null; // {username, role:'owner'|'moderator', permissions} — in-memory only, resets on reload
 let bannedPlayers = []; // {id, name, phone, serial, photo, reason, date}
 
 /* ===================== ROUTING ===================== */
@@ -1222,13 +1233,28 @@ function toggleForm(id){
   el.style.display = (el.style.display==='none' || !el.style.display) ? 'block' : 'none';
 }
 
-/* ===================== MODERATOR AUTH =====================
+/* ===================== ADMIN / MODERATOR AUTH =====================
    Client-side access gate for a static site: there is no real server-side
    auth here, so this is a soft gate (good enough to stop casual visitors
    from publishing, not a security boundary against a determined person
-   inspecting the page). Change OWNER_CODE before sharing this site.
+   inspecting the page).
 ================================================================ */
-const OWNER_CODE = "tfoc-owner-2026"; // CHANGE THIS before publishing the site
+const ADMIN_USERNAME = "adem";
+const ADMIN_PASSWORD = "tun-tfoc-admin-2021$$"; // CHANGE THIS if you rotate credentials
+const PERMISSION_KEYS = ['news','mercato','tournaments','clans','media','banned'];
+function defaultPermissions(){
+  const p = {}; PERMISSION_KEYS.forEach(k=>p[k]=true); return p;
+}
+function getDeviceId(){
+  try{
+    let id = localStorage.getItem('tfoc_device_id');
+    if(!id){
+      id = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36)+Math.random().toString(36).slice(2)));
+      localStorage.setItem('tfoc_device_id', id);
+    }
+    return id;
+  }catch(e){ return 'unknown-device'; }
+}
 
 async function sha256(text){
   try{
@@ -1238,9 +1264,29 @@ async function sha256(text){
 }
 function isMod(){ return !!currentUser; }
 function isOwner(){ return !!currentUser && currentUser.role === 'owner'; }
+function hasPermission(key){
+  if(!currentUser) return false;
+  if(currentUser.role === 'owner') return true;
+  return !!(currentUser.permissions && currentUser.permissions[key]);
+}
 function requireMod(msgId){
   if(!isMod()){ if(msgId) showMsg(msgId, 'Please log in as a moderator to publish.', false); return false; }
   return true;
+}
+function requirePermission(key, msgId){
+  if(!currentUser){ if(msgId) showMsg(msgId, 'Please log in as a moderator to publish.', false); return false; }
+  if(!hasPermission(key)){ if(msgId) showMsg(msgId, "You don't have permission to do this. Ask the admin.", false); return false; }
+  return true;
+}
+async function logActivity(action){
+  if(!currentUser) return;
+  try{ await sSet('activity:'+uid(), {username: currentUser.username, role: currentUser.role, action, date: new Date().toISOString()}); }
+  catch(e){ console.error('logActivity failed', e); }
+}
+function fmtDateTime(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return iso;
+  return d.toLocaleString('en-GB', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'});
 }
 function applyAccessUI(){
   document.body.classList.toggle('is-mod', isMod());
@@ -1259,47 +1305,105 @@ function applyAccessUI(){
     loginBtn.style.display = 'inline-flex';
     logoutBtn.style.display = 'none';
   }
-  if(isOwner()) renderModsList();
+  if(isOwner()){
+    renderModsList();
+    loadActivityLog().then(renderActivityLog);
+  }
 }
 async function attemptLogin(){
   const username = document.getElementById('loginUser').value.trim();
   const pass = document.getElementById('loginPass').value;
   if(!username || !pass){ showMsg('loginMsg','Enter a username and passcode.', false); return; }
-  if(pass === OWNER_CODE){
-    currentUser = {username: username || 'admin', role:'owner'};
+
+  if(username.toLowerCase() === ADMIN_USERNAME.toLowerCase() && pass === ADMIN_PASSWORD){
+    currentUser = {username: ADMIN_USERNAME, role:'owner', permissions: defaultPermissions()};
   } else {
     const hash = await sha256(pass);
     const match = modsList.find(m=>m.username.toLowerCase()===username.toLowerCase() && m.passHash===hash);
     if(!match){ showMsg('loginMsg','Invalid username or passcode.', false); return; }
-    currentUser = {username: match.username, role:'moderator'};
+    const deviceId = getDeviceId();
+    if(match.boundDevice && match.boundDevice !== deviceId){
+      showMsg('loginMsg', 'This account is already linked to another device. Ask the admin to unlink it.', false);
+      return;
+    }
+    if(!match.boundDevice){
+      match.boundDevice = deviceId;
+      await sSet('mods:list', modsList);
+    }
+    currentUser = {username: match.username, role:'moderator', permissions: match.permissions || defaultPermissions()};
   }
   showMsg('loginMsg','Logged in.', true);
   document.getElementById('loginUser').value=''; document.getElementById('loginPass').value='';
   applyAccessUI();
+  logActivity('Logged in');
   setTimeout(()=>closeModal('loginModal'), 500);
 }
 function logoutMod(){
   currentUser = null;
   applyAccessUI();
 }
+async function loadActivityLog(){
+  const keys = await sListKeys('activity:');
+  activityLog = [];
+  for(const k of keys){ const v = await sGet(k); if(v) activityLog.push(v); }
+  activityLog.sort((a,b)=> new Date(b.date) - new Date(a.date));
+}
+function renderActivityLog(){
+  const el = document.getElementById('activityLogList');
+  if(!el) return;
+  if(activityLog.length===0){ el.innerHTML = '<div class="empty-state">No activity recorded yet.</div>'; return; }
+  const lastSeen = {};
+  activityLog.forEach(a=>{ if(!lastSeen[a.username]) lastSeen[a.username] = a.date; });
+  const summary = Object.keys(lastSeen).map(u=>`
+    <div class="mods-row"><span><b>${escapeHtml(u)}</b></span><span class="mono">Last seen: ${fmtDateTime(lastSeen[u])}</span></div>`).join('');
+  const history = activityLog.slice(0,100).map(a=>`
+    <div class="mods-row"><span><b>${escapeHtml(a.username)}</b> <span class="mono">(${escapeHtml(a.role)})</span> — ${escapeHtml(a.action)}</span><span class="mono">${fmtDateTime(a.date)}</span></div>`).join('');
+  el.innerHTML = `<div style="margin-bottom:12px;">${summary}</div><div style="max-height:260px; overflow:auto; display:flex; flex-direction:column; gap:6px;">${history}</div>`;
+}
 function renderModsList(){
   const list = document.getElementById('modsList');
   if(!list) return;
   if(modsList.length===0){ list.innerHTML = '<div class="empty-state">No moderators added yet.</div>'; return; }
-  list.innerHTML = modsList.map((m,i)=>`
-    <div class="mods-row">
-      <span>${escapeHtml(m.username)} <span class="mono">· moderator</span></span>
-      <button onclick="removeModerator(${i})">Remove</button>
-    </div>`).join('');
+  list.innerHTML = modsList.map((m,i)=>{
+    const perms = m.permissions || defaultPermissions();
+    const permBoxes = PERMISSION_KEYS.map(k=>`
+      <label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:11px;color:var(--gray-2);">
+        <input type="checkbox" ${perms[k]?'checked':''} onchange="updateModPermission(${i}, '${k}', this.checked)"> ${k}
+      </label>`).join('');
+    return `
+    <div class="mods-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <span>${escapeHtml(m.username)} <span class="mono">· moderator</span> <span class="mono" style="color:var(--gray-3);">· ${m.boundDevice ? 'device linked' : 'no device yet'}</span></span>
+        <span style="display:flex; gap:14px;">
+          ${m.boundDevice ? `<button onclick="resetModDevice(${i})">Reset device</button>` : ''}
+          <button onclick="removeModerator(${i})">Remove</button>
+        </span>
+      </div>
+      <div>${permBoxes}</div>
+    </div>`;
+  }).join('');
+}
+async function updateModPermission(index, key, checked){
+  if(!isOwner()) return;
+  if(!modsList[index].permissions) modsList[index].permissions = defaultPermissions();
+  modsList[index].permissions[key] = checked;
+  await sSet('mods:list', modsList);
+}
+async function resetModDevice(index){
+  if(!isOwner()) return;
+  modsList[index].boundDevice = null;
+  await sSet('mods:list', modsList);
+  renderModsList();
 }
 async function addModerator(){
   if(!isOwner()){ showMsg('modsMsg','Only the federation admin can manage moderators.', false); return; }
   const username = document.getElementById('newModUser').value.trim();
   const pass = document.getElementById('newModPass').value;
   if(!username || !pass){ showMsg('modsMsg','Enter a username and passcode.', false); return; }
+  if(username.toLowerCase() === ADMIN_USERNAME.toLowerCase()){ showMsg('modsMsg','That username is reserved for the admin account.', false); return; }
   if(modsList.some(m=>m.username.toLowerCase()===username.toLowerCase())){ showMsg('modsMsg','That username already exists.', false); return; }
   const passHash = await sha256(pass);
-  modsList.push({username, passHash});
+  modsList.push({username, passHash, permissions: defaultPermissions(), boundDevice: null});
   const ok = await sSet('mods:list', modsList);
   if(ok){
     showMsg('modsMsg', `Moderator "${username}" added.`, true);
@@ -1328,7 +1432,7 @@ function renderIntro(){
   }
 }
 async function submitIntro(){
-  if(!requireMod('introMsg')) return;
+  if(!requirePermission('news', 'introMsg')) return;
   const heading = document.getElementById('introHeadingInput').value.trim();
   const body = document.getElementById('introBodyInput').value.trim();
   if(!heading || !body){ showMsg('introMsg','Please fill in both fields.', false); return; }
@@ -1337,6 +1441,7 @@ async function submitIntro(){
   if(ok){
     showMsg('introMsg','Saved.', true);
     renderIntro();
+    logActivity('Updated homepage introduction');
     setTimeout(()=>{ document.getElementById('introForm').style.display='none'; }, 500);
   } else { showMsg('introMsg', storageErrorMessage(), false); }
 }
@@ -1410,7 +1515,7 @@ function normalizeVideoUrl(url){
 }
 
 async function submitAnnouncement(){
-  if(!requireMod('announceMsg')) return;
+  if(!requirePermission('media', 'announceMsg')) return;
   const type = document.getElementById('annType').value;
   const caption = document.getElementById('annCaption').value.trim();
   const urlInput = document.getElementById('annUrl').value.trim();
@@ -1447,14 +1552,16 @@ async function submitAnnouncement(){
     const textEl = document.getElementById('annText'); if(textEl) textEl.value='';
     if(fileInput) fileInput.value='';
     renderAnnouncements();
+    logActivity(`Published ${type} announcement: ${caption || bodyText.slice(0,40) || '(untitled)'}`);
   } else { showMsg('announceMsg', storageErrorMessage(), false); }
 }
 async function deleteAnnouncement(id){
-  if(!isMod()) return;
+  if(!requirePermission('media')) return;
   if(!confirm('Remove this announcement?')) return;
   await sDelete('media:'+id);
   mediaExtra = mediaExtra.filter(m=>m.id!==id);
   renderAnnouncements();
+  logActivity('Deleted an announcement');
 }
 
 function showMsg(id, text, ok){
@@ -1479,7 +1586,7 @@ function renderNews(){
     </div>`).join('');
 }
 async function submitNews(){
-  if(!requireMod('newsMsg')) return;
+  if(!requirePermission('news', 'newsMsg')) return;
   const title = document.getElementById('newsTitle').value.trim();
   const author = document.getElementById('newsAuthor').value.trim() || 'TFOC Board';
   const body = document.getElementById('newsBody').value.trim();
@@ -1491,7 +1598,8 @@ async function submitNews(){
     showMsg('newsMsg','News published successfully.', true);
     document.getElementById('newsTitle').value=''; document.getElementById('newsAuthor').value=''; document.getElementById('newsBody').value='';
     renderNews(); updateTicker(); updateStats();
-  } else { showMsg('newsMsg',"Failed to publish, please try again.", false); }
+    logActivity(`Published news: "${title}"`);
+  } else { showMsg('newsMsg', storageErrorMessage(), false); }
 }
 
 /* ===================== RENDER: MERCATO ===================== */
@@ -1512,7 +1620,7 @@ function renderMercato(){
     </div>`).join('');
 }
 async function submitMercato(){
-  if(!requireMod('mercatoMsg')) return;
+  if(!requirePermission('mercato', 'mercatoMsg')) return;
   const playerName = document.getElementById('mvPlayer').value.trim();
   const type = document.getElementById('mvType').value;
   const fromClan = document.getElementById('mvFrom').value.trim();
@@ -1526,7 +1634,8 @@ async function submitMercato(){
     showMsg('mercatoMsg','Move published.', true);
     ['mvPlayer','mvFrom','mvTo','mvNote'].forEach(id=>document.getElementById(id).value='');
     renderMercato(); updateTicker(); updateStats();
-  } else { showMsg('mercatoMsg',"Failed, please try again.", false); }
+    logActivity(`Published transfer move: "${playerName}"`);
+  } else { showMsg('mercatoMsg', storageErrorMessage(), false); }
 }
 
 /* ===================== RENDER: TOURNAMENTS ===================== */
@@ -1566,7 +1675,7 @@ async function loadTourneyRules(tid){
   }
 }
 async function submitTourneyRules(){
-  if(!requireMod('trulesMsg')) return;
+  if(!requirePermission('tournaments', 'trulesMsg')) return;
   if(!currentTourneyId) return;
   const heading = document.getElementById('trulesHeadingInput').value.trim();
   const body = document.getElementById('trulesBodyInput').value.trim();
@@ -1578,6 +1687,7 @@ async function submitTourneyRules(){
     document.getElementById('trulesHeading').textContent = item.heading;
     document.getElementById('trulesBody').textContent = item.body;
     showMsg('trulesMsg','Rules saved.', true);
+    logActivity('Updated rules for a tournament');
     setTimeout(()=>{ document.getElementById('trulesForm').style.display='none'; }, 500);
   } else { showMsg('trulesMsg', storageErrorMessage(), false); }
 }
@@ -1597,7 +1707,7 @@ function renderTourneyPosts(){
   grid.innerHTML = tourneyPosts.map(p=>mediaCardHtml(p, 'deleteTourneyPost')).join('');
 }
 async function submitTourneyPost(){
-  if(!requireMod('tourneyPostMsg')) return;
+  if(!requirePermission('tournaments', 'tourneyPostMsg')) return;
   if(!currentTourneyId) return;
   const type = document.getElementById('tpType').value;
   const caption = document.getElementById('tpCaption').value.trim();
@@ -1635,14 +1745,16 @@ async function submitTourneyPost(){
     const textEl = document.getElementById('tpText'); if(textEl) textEl.value='';
     if(fileInput) fileInput.value='';
     renderTourneyPosts();
+    logActivity(`Published ${type} media on a tournament`);
   } else { showMsg('tourneyPostMsg', storageErrorMessage(), false); }
 }
 async function deleteTourneyPost(id){
-  if(!isMod() || !currentTourneyId) return;
+  if(!requirePermission('tournaments') || !currentTourneyId) return;
   if(!confirm('Remove this update?')) return;
   await sDelete('tpost:'+currentTourneyId+':'+id);
   tourneyPosts = tourneyPosts.filter(p=>p.id!==id);
   renderTourneyPosts();
+  logActivity('Deleted tournament media');
 }
 function updateTpFieldsVisibility(){
   const type = document.getElementById('tpType').value;
@@ -1681,7 +1793,7 @@ function renderBanned(){
     </div>`).join('');
 }
 async function submitBannedPlayer(){
-  if(!requireMod('bannedMsg')) return;
+  if(!requirePermission('banned', 'bannedMsg')) return;
   const name = document.getElementById('bnName').value.trim();
   const phone = document.getElementById('bnPhone').value.trim();
   const serial = document.getElementById('bnSerial').value.trim();
@@ -1709,14 +1821,16 @@ async function submitBannedPlayer(){
     ['bnName','bnPhone','bnSerial','bnReason','bnPhotoUrl'].forEach(i=>document.getElementById(i).value='');
     if(fileInput) fileInput.value='';
     renderBanned();
+    logActivity(`Added "${name}" to the banned players list`);
   } else { showMsg('bannedMsg', storageErrorMessage(), false); }
 }
 async function removeBannedPlayer(id){
-  if(!isMod()) return;
+  if(!requirePermission('banned')) return;
   if(!confirm('Remove this player from the banned list?')) return;
   await sDelete('banned:'+id);
   bannedPlayers = bannedPlayers.filter(b=>b.id!==id);
   renderBanned();
+  logActivity('Removed a player from the banned list');
 }
 
 function renderTourneys(){
@@ -1745,7 +1859,7 @@ function renderTourneys(){
     </div>`).join('');
 }
 async function toggleTourneyOfficial(index){
-  if(!isMod()){ alert('Only moderators can change a tournament\'s official status.'); return; }
+  if(!requirePermission('tournaments')){ alert("You don't have permission to change a tournament's official status."); return; }
   const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
   const t = all[index];
   const newVal = !t.official;
@@ -1765,6 +1879,7 @@ async function toggleTourneyOfficial(index){
     if(t.__id) await sSet(t.__id, t);
   }
   renderTourneys();
+  logActivity(`Marked "${t.name}" as ${newVal ? 'official' : 'unofficial'}`);
 }
 async function registerClanToTourney(index){
   if(clans.length===0){ alert("No clan registered yet. Register your clan first in the Registration tab."); goTo('inscription'); return; }
@@ -1790,7 +1905,7 @@ async function registerClanToTourney(index){
   renderTourneys(); updateStats();
 }
 async function submitTourney(){
-  if(!requireMod('tourneyMsg')) return;
+  if(!requirePermission('tournaments', 'tourneyMsg')) return;
   const name = document.getElementById('tName').value.trim();
   const date = document.getElementById('tDate').value;
   const format = document.getElementById('tFormat').value.trim();
@@ -1820,6 +1935,7 @@ async function submitTourney(){
     ['tName','tDate','tFormat','tPrize','tDesc','tLogoUrl'].forEach(id=>document.getElementById(id).value='');
     if(fileInput) fileInput.value='';
     renderTourneys(); updateStats();
+    logActivity(`Created tournament "${name}"`);
   } else { showMsg('tourneyMsg', storageErrorMessage(), false); }
 }
 
