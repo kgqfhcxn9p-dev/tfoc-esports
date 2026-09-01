@@ -1173,6 +1173,7 @@ let players = [];    // {id, clanId, name, pseudo, pos, num}
 let newsExtra = [];
 let mercatoExtra = [];
 let tourneyExtra = [];
+let hiddenSeeds = []; // names of default demo tournaments an admin/mod has deleted
 let selectedClanId = null;
 let mediaExtra = [];   // {id, type:'photo'|'video', url, caption, date}
 let siteIntro = null;  // {heading, body}
@@ -1576,14 +1577,23 @@ function renderNews(){
   const list = document.getElementById('newsList');
   if(all.length===0){ list.innerHTML = '<div class="empty-state">No news yet.</div>'; return; }
   list.innerHTML = all.map(n=>`
-    <div class="news-item">
+    <div class="news-item" style="position:relative;">
       <div class="news-date mono">${fmtDate(n.date)}</div>
       <div>
         <span class="news-tag">${n.author||'TFOC'}</span>
         <h3>${escapeHtml(n.title)}</h3>
         <p>${escapeHtml(n.body)}</p>
       </div>
+      ${n.__id ? `<button class="mod-only announce-del" style="position:absolute; top:0; right:0;" title="Delete" onclick="deleteNews('${n.__id}')">×</button>` : ''}
     </div>`).join('');
+}
+async function deleteNews(key){
+  if(!requirePermission('news')) return;
+  if(!confirm('Delete this news item?')) return;
+  await sDelete(key);
+  newsExtra = newsExtra.filter(n=>n.__id!==key);
+  renderNews(); updateTicker(); updateStats();
+  logActivity('Deleted a news item');
 }
 async function submitNews(){
   if(!requirePermission('news', 'newsMsg')) return;
@@ -1592,8 +1602,10 @@ async function submitNews(){
   const body = document.getElementById('newsBody').value.trim();
   if(!title || !body){ showMsg('newsMsg','Please fill in the title and content.', false); return; }
   const item = {title, author, body, date: new Date().toISOString().slice(0,10)};
-  const ok = await sSet('news:'+uid(), item);
+  const key = 'news:'+uid();
+  const ok = await sSet(key, item);
   if(ok){
+    item.__id = key;
     newsExtra.unshift(item);
     showMsg('newsMsg','News published successfully.', true);
     document.getElementById('newsTitle').value=''; document.getElementById('newsAuthor').value=''; document.getElementById('newsBody').value='';
@@ -1610,14 +1622,23 @@ function renderMercato(){
   const list = document.getElementById('mercatoList');
   if(all.length===0){ list.innerHTML = '<div class="empty-state">No transfer moves yet.</div>'; return; }
   list.innerHTML = all.map(m=>`
-    <div class="mercato-item">
+    <div class="mercato-item" style="position:relative;">
       <div class="mv-badge ${mvClass(m.type)}">${mvLabel(m.type)}</div>
       <div class="mercato-body">
         <div class="player">${escapeHtml(m.playerName)}</div>
         <div class="clanflow">${escapeHtml(m.fromClan||'—')}<span class="arrow">→</span>${escapeHtml(m.toClan||'—')}${m.note? ' · '+escapeHtml(m.note):''}</div>
       </div>
       <div class="mercato-date mono">${fmtDate(m.date)}</div>
+      ${m.__id ? `<button class="mod-only announce-del" style="position:absolute; top:0; right:0;" title="Delete" onclick="deleteMercato('${m.__id}')">×</button>` : ''}
     </div>`).join('');
+}
+async function deleteMercato(key){
+  if(!requirePermission('mercato')) return;
+  if(!confirm('Delete this transfer move?')) return;
+  await sDelete(key);
+  mercatoExtra = mercatoExtra.filter(m=>m.__id!==key);
+  renderMercato(); updateTicker(); updateStats();
+  logActivity('Deleted a transfer move');
 }
 async function submitMercato(){
   if(!requirePermission('mercato', 'mercatoMsg')) return;
@@ -1628,8 +1649,10 @@ async function submitMercato(){
   const note = document.getElementById('mvNote').value.trim();
   if(!playerName){ showMsg('mercatoMsg','Please enter the player\'s tag.', false); return; }
   const item = {playerName, type, fromClan, toClan, note, date: new Date().toISOString().slice(0,10)};
-  const ok = await sSet('mercato:'+uid(), item);
+  const key = 'mercato:'+uid();
+  const ok = await sSet(key, item);
   if(ok){
+    item.__id = key;
     mercatoExtra.unshift(item);
     showMsg('mercatoMsg','Move published.', true);
     ['mvPlayer','mvFrom','mvTo','mvNote'].forEach(id=>document.getElementById(id).value='');
@@ -1855,8 +1878,28 @@ function renderTourneys(){
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" onclick="registerClanToTourney(${i})">Register my clan</button>
         <button class="btn btn-ghost btn-sm" onclick="openTourneyPosts('${tourneyTid(t)}')">Rules &amp; Media</button>
+        <button class="btn btn-ghost btn-sm mod-only" style="color:var(--red); border-color:var(--red);" onclick="deleteTourney(${i})">Delete</button>
       </div>
     </div>`).join('');
+}
+async function deleteTourney(index){
+  if(!requirePermission('tournaments')) return;
+  const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
+  const t = all[index];
+  if(!t) return;
+  if(!confirm(`Delete tournament "${t.name}"? Its rules and media will no longer be reachable.`)) return;
+  if(t.__seed){
+    hiddenSeeds.push(t.name);
+    await sSet('hidden-seed-tournaments', hiddenSeeds);
+    const idx = SEED_TOURNEYS.findIndex(s=>s.name===t.name);
+    if(idx !== -1) SEED_TOURNEYS.splice(idx,1);
+  } else {
+    if(t.__id) await sDelete(t.__id);
+    tourneyExtra = tourneyExtra.filter(x=>x.__id !== t.__id);
+  }
+  renderTourneys();
+  updateStats();
+  logActivity(`Deleted tournament "${t.name}"`);
 }
 async function toggleTourneyOfficial(index){
   if(!requirePermission('tournaments')){ alert("You don't have permission to change a tournament's official status."); return; }
@@ -2063,18 +2106,24 @@ async function loadAll(){
 
   const newsKeys = await sListKeys('news:');
   newsExtra = [];
-  for(const k of newsKeys){ const v = await sGet(k); if(v) newsExtra.push(v); }
+  for(const k of newsKeys){ const v = await sGet(k); if(v){ v.__id = k; newsExtra.push(v); } }
   newsExtra.sort((a,b)=> new Date(b.date)-new Date(a.date));
 
   const mvKeys = await sListKeys('mercato:');
   mercatoExtra = [];
-  for(const k of mvKeys){ const v = await sGet(k); if(v) mercatoExtra.push(v); }
+  for(const k of mvKeys){ const v = await sGet(k); if(v){ v.__id = k; mercatoExtra.push(v); } }
   mercatoExtra.sort((a,b)=> new Date(b.date)-new Date(a.date));
 
   const tKeys = await sListKeys('tourney:');
   tourneyExtra = [];
   for(const k of tKeys){ const v = await sGet(k); if(v){ v.__id = k; tourneyExtra.push(v); } }
   tourneyExtra.sort((a,b)=> new Date(b.date)-new Date(a.date));
+
+  hiddenSeeds = (await sGet('hidden-seed-tournaments')) || [];
+  hiddenSeeds.forEach(name=>{
+    const idx = SEED_TOURNEYS.findIndex(s=>s.name===name);
+    if(idx !== -1) SEED_TOURNEYS.splice(idx,1);
+  });
 
   const confirmed = await sGet('counter:confirmed');
   if(confirmed){ confirmedExtra = confirmed; }
