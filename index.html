@@ -233,7 +233,6 @@
   .banned-info .row{font-size:11.5px; color:var(--gray-2); margin-top:3px; font-family:'IBM Plex Mono',monospace;}
   .banned-info .reason{font-size:11.5px; color:var(--red); margin-top:6px; line-height:1.4;}
   .banned-del{position:absolute; top:8px; right:8px; background:var(--bg-2); color:var(--gray-2); border:1px solid var(--gray-4); width:22px; height:22px; font-size:12px; cursor:pointer; display:none;}
-  .mod-only .banned-del{display:block;}
 
   /* TOURNAMENT OFFICIAL STATUS */
   .tstatus-pill{font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:700; letter-spacing:1px; text-transform:uppercase; padding:4px 9px; border:none; cursor:default;}
@@ -378,7 +377,6 @@
   .announce-caption span{font-family:'IBM Plex Mono',monospace; color:var(--red); font-size:9px; letter-spacing:1.2px; text-transform:uppercase;}
   .announce-caption h4{font-size:14px; font-weight:700; color:#fff; margin-top:3px;}
   .announce-del{position:absolute; top:10px; left:10px; z-index:3; background:rgba(0,0,0,.65); color:#fff; border:1px solid rgba(255,255,255,.3); width:24px; height:24px; font-size:13px; cursor:pointer; display:none;}
-  .mod-only .announce-del{display:block;}
   .announce-card.text-card{position:static; min-height:0; padding:18px; display:flex; flex-direction:column; gap:8px; background:var(--paper);}
   .announce-card.text-card::after{content:none;}
   .text-card-date{font-size:9px; color:var(--red); letter-spacing:1px; text-transform:uppercase;}
@@ -1453,7 +1451,7 @@ function mediaCardHtml(item, deleteFn){
   if(item.type === 'text'){
     return `
       <div class="announce-card text-card">
-        <button class="announce-del" title="Remove" onclick="${deleteFn}('${delKey}')">×</button>
+        <button class="mod-only announce-del" title="Remove" onclick="${deleteFn}('${delKey}')">×</button>
         <span class="text-card-date mono">${fmtDate(item.date)}</span>
         <h4>${escapeHtml(item.caption||'Announcement')}</h4>
         <p>${escapeHtml(item.body||'')}</p>
@@ -1474,7 +1472,7 @@ function mediaCardHtml(item, deleteFn){
     <div class="announce-card">
       ${isVideo ? '<span class="play-badge">VIDEO</span>' : ''}
       ${mediaTag}
-      <button class="announce-del" title="Remove" onclick="${deleteFn}('${delKey}')">×</button>
+      <button class="mod-only announce-del" title="Remove" onclick="${deleteFn}('${delKey}')">×</button>
       <div class="announce-caption"><span>${fmtDate(item.date)}</span><h4>${escapeHtml(item.caption||'Untitled')}</h4></div>
     </div>`;
 }
@@ -1810,7 +1808,7 @@ function renderBanned(){
   if(bannedPlayers.length===0){ grid.innerHTML = '<div class="empty-state">No banned players.</div>'; return; }
   grid.innerHTML = bannedPlayers.map(b=>`
     <div class="card banned-card">
-      <button class="banned-del" title="Remove" onclick="removeBannedPlayer('${b.__id||b.id}')">×</button>
+      <button class="mod-only banned-del" title="Remove" onclick="removeBannedPlayer('${b.__id||b.id}')">×</button>
       <div class="banned-photo">${b.photo ? `<img src="${b.photo}" alt="${escapeHtml(b.name)}">` : `<div class="initial">${escapeHtml((b.name||'?').charAt(0).toUpperCase())}</div>`}</div>
       <div class="banned-info">
         <div class="name">${escapeHtml(b.name)}</div>
