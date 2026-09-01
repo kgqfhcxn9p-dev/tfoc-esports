@@ -403,6 +403,32 @@
   .mods-row{display:flex; justify-content:space-between; align-items:center; padding:9px 12px; background:var(--bg-2); border:1px solid var(--gray-4); font-size:13px;}
   .mods-row .mono{color:var(--gray-2); font-size:11px;}
   .mods-row button{background:none; border:none; color:var(--red); cursor:pointer; font-size:12px; font-family:'IBM Plex Mono',monospace;}
+
+  /* BRACKET MANAGER */
+  .bk-clan-chip{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--gray-1); cursor:pointer;}
+  .bk-clan-chip input{accent-color:var(--red);}
+  .bk-groups-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:20px; margin-bottom:28px;}
+  .bk-group-card{padding:18px;}
+  .bk-group-card h4{font-family:'Anton',sans-serif; font-size:15px; text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; color:var(--ink);}
+  table.bk-standings{width:100%; border-collapse:collapse; font-size:12px;}
+  table.bk-standings th{text-align:left; font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:.8px; text-transform:uppercase; color:var(--gray-2); padding:6px 5px; border-bottom:2px solid var(--red);}
+  table.bk-standings td{padding:7px 5px; border-bottom:1px solid var(--gray-4); color:var(--ink);}
+  table.bk-standings td.clan-cell{font-weight:600;}
+  table.bk-standings tr:nth-child(-n+2) td.clan-cell{color:var(--red);}
+  table.bk-standings td.num{font-family:'IBM Plex Mono',monospace; text-align:center; color:var(--gray-2);}
+  .bk-match-row{display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--gray-4); font-size:13px;}
+  .bk-match-row:last-child{border-bottom:none;}
+  .bk-match-clan{flex:1; text-align:center; font-weight:600; color:var(--ink);}
+  .bk-match-clan.home{text-align:right;}
+  .bk-match-clan.away{text-align:left;}
+  .bk-score-input{width:36px; text-align:center; border:1px solid var(--gray-4); background:var(--bg-2); color:var(--ink); padding:5px 2px; font-family:'IBM Plex Mono',monospace; font-weight:700;}
+  .bk-score-input:disabled{border-color:transparent; background:transparent;}
+  .bk-vs{color:var(--gray-3); font-family:'IBM Plex Mono',monospace; font-size:10px;}
+  .bk-round-label{font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--red); margin:18px 0 8px;}
+  .bk-export-row{display:flex; gap:10px; flex-wrap:wrap; margin:24px 0;}
+  .bk-champion{text-align:center; padding:30px; background:var(--bg-2); border:1px solid var(--red);}
+  .bk-champion .trophy{font-size:32px;}
+  .bk-champion h3{font-family:'Anton',sans-serif; font-size:24px; text-transform:uppercase; color:#fff; margin-top:8px;}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
@@ -906,6 +932,54 @@
           <button class="btn btn-red btn-sm" onclick="submitTourneyPost()">Publish</button>
         </div>
         <div class="announce-grid" id="tourneyPostsGrid"><div class="loader">Loading media…</div></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="modal-shell" id="bracketModal" role="dialog" aria-modal="true" aria-labelledby="bracketTitle" onclick="closeFromBackdrop(event)">
+  <div class="modal-panel" style="max-width:1040px;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-kicker">TFOC tournament</div>
+        <h2 id="bracketTitle">Bracket</h2>
+      </div>
+      <button class="modal-close" type="button" aria-label="Close" onclick="closeModal('bracketModal')">×</button>
+    </div>
+    <div class="modal-body">
+
+      <div class="card form-card mod-only" id="bracketSetup" style="margin-bottom:22px;">
+        <h4 class="mono" style="font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--red); margin-bottom:14px;">Setup</h4>
+        <div class="msg" id="bracketMsg"></div>
+        <div class="form-grid">
+          <div class="field"><label>System</label>
+            <select id="bkSystem" onchange="updateBracketFieldsVisibility()">
+              <option value="league">League (round-robin)</option>
+              <option value="group_elim">Group stage + Elimination</option>
+            </select>
+          </div>
+          <div class="field" id="bkGroupSizeWrap" style="display:none;"><label>Clans per group</label><input id="bkGroupSize" type="number" min="2" max="8" value="4"></div>
+          <div class="field"><label>Draw</label>
+            <select id="bkDraw">
+              <option value="random">Random draw</option>
+              <option value="manual">Manual draw</option>
+            </select>
+          </div>
+        </div>
+        <label class="mono" style="font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:var(--gray-2); display:block; margin:14px 0 8px;">Participating clans</label>
+        <div id="bkClanChecklist" style="display:flex; flex-wrap:wrap; gap:10px 18px; margin-bottom:16px;"></div>
+        <div id="bkManualGroups" style="display:none; margin-bottom:16px;"></div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-red btn-sm" onclick="generateDraw()">Generate draw</button>
+        </div>
+      </div>
+      <div class="mod-only" id="bkReconfigureBar" style="display:none; margin-bottom:20px;">
+        <button class="btn btn-ghost btn-sm" onclick="openBracketSetup()">Reconfigure draw (resets scores)</button>
+      </div>
+
+      <div id="bracketView">
+        <div class="empty-state">No draw generated for this tournament yet.</div>
       </div>
 
     </div>
@@ -1883,6 +1957,7 @@ function renderTourneys(){
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" onclick="registerClanToTourney(${i})">Register my clan</button>
         <button class="btn btn-ghost btn-sm" onclick="openTourneyPosts('${tourneyTid(t)}')">Rules &amp; Media</button>
+        <button class="btn btn-red btn-sm" onclick="openBracket('${tourneyTid(t)}', '${escapeHtml(t.name).replace(/'/g,"\\'")}')">Bracket</button>
         <button class="btn btn-ghost btn-sm mod-only" style="color:var(--red); border-color:var(--red);" onclick="deleteTourney(${i})">Delete</button>
       </div>
     </div>`).join('');
@@ -1906,6 +1981,393 @@ async function deleteTourney(index){
   updateStats();
   logActivity(`Deleted tournament "${t.name}"`);
 }
+
+/* ===================== TOURNAMENT BRACKET MANAGER =====================
+   Format (league or group+elimination), clan draw (random or manual),
+   standings, match schedule, scores, and CSV exports — per tournament.
+   Stored as a single object under key 'tbracket:{tournamentId}'.
+================================================================ */
+let currentBracketTid = null;
+let currentBracketName = '';
+let currentBracket = null;
+let bkSetupForceOpen = false;
+
+function openBracket(tid, name){
+  currentBracketTid = tid;
+  currentBracketName = name;
+  bkSetupForceOpen = false;
+  document.getElementById('bracketTitle').textContent = name;
+  openModal('bracketModal');
+  loadBracket(tid);
+}
+async function loadBracket(tid){
+  currentBracket = await sGet('tbracket:'+tid);
+  renderBracketSetup();
+  renderBracketView();
+}
+function openBracketSetup(){
+  bkSetupForceOpen = true;
+  renderBracketSetup();
+  renderBracketView();
+  document.getElementById('bracketSetup').scrollIntoView({behavior:'smooth'});
+}
+function clanLabel(id){
+  const c = clans.find(x=>x.id===id);
+  return c ? `${c.tag} — ${c.name}` : (id ? id : 'TBD');
+}
+function shuffleArray(arr){
+  for(let i=arr.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr;
+}
+function roundRobinFixtures(clanIds){
+  const ids = clanIds.slice();
+  if(ids.length < 2) return [];
+  if(ids.length % 2 !== 0) ids.push(null); // bye
+  const n = ids.length;
+  const rounds = n - 1;
+  const half = n / 2;
+  let list = ids.slice();
+  const fixtures = [];
+  for(let r=0; r<rounds; r++){
+    for(let i=0; i<half; i++){
+      const home = list[i], away = list[n-1-i];
+      if(home !== null && away !== null) fixtures.push({round: r+1, home, away});
+    }
+    const fixed = list[0];
+    const rest = list.slice(1);
+    rest.unshift(rest.pop());
+    list = [fixed, ...rest];
+  }
+  return fixtures;
+}
+function computeStandings(clanIds, matches){
+  const table = {};
+  clanIds.forEach(id=>{ table[id] = {clanId:id, played:0, win:0, draw:0, loss:0, gf:0, ga:0, pts:0}; });
+  matches.forEach(m=>{
+    if(m.homeScore==null || m.awayScore==null) return;
+    if(!table[m.home] || !table[m.away]) return;
+    const h = table[m.home], a = table[m.away];
+    h.played++; a.played++;
+    h.gf += m.homeScore; h.ga += m.awayScore;
+    a.gf += m.awayScore; a.ga += m.homeScore;
+    if(m.homeScore > m.awayScore){ h.win++; h.pts+=3; a.loss++; }
+    else if(m.homeScore < m.awayScore){ a.win++; a.pts+=3; h.loss++; }
+    else { h.draw++; a.draw++; h.pts++; a.pts++; }
+  });
+  return Object.values(table).sort((x,y)=> y.pts-x.pts || (y.gf-y.ga)-(x.gf-x.ga) || y.gf-x.gf);
+}
+function stageLabel(stage){
+  const map = {ro32:'Round of 32', ro16:'Round of 16', qf:'Quarterfinal', sf:'Semifinal', final:'Final'};
+  return map[stage] || stage;
+}
+function stageForCount(n){
+  if(n>=32) return 'ro32';
+  if(n>=16) return 'ro16';
+  if(n>=8) return 'qf';
+  if(n>=4) return 'sf';
+  return 'final';
+}
+
+function renderBracketSetup(){
+  const setupCard = document.getElementById('bracketSetup');
+  const reconfigBar = document.getElementById('bkReconfigureBar');
+  const hasDraw = currentBracket && currentBracket.groups && currentBracket.groups.length;
+  if(hasDraw && !bkSetupForceOpen){
+    setupCard.style.display = 'none';
+  } else {
+    setupCard.style.display = 'block';
+  }
+  reconfigBar.style.display = (hasDraw && !bkSetupForceOpen) ? 'block' : 'none';
+
+  document.getElementById('bkSystem').value = (currentBracket && currentBracket.system) || 'league';
+  document.getElementById('bkGroupSize').value = (currentBracket && currentBracket.groupSize) || 4;
+  document.getElementById('bkDraw').value = (currentBracket && currentBracket.drawType) || 'random';
+
+  const selected = new Set(currentBracket ? (currentBracket.clanIds||[]) : []);
+  const checklist = document.getElementById('bkClanChecklist');
+  if(clans.length===0){
+    checklist.innerHTML = '<div class="empty-state">No registered clans yet.</div>';
+  } else {
+    checklist.innerHTML = clans.map(c=>`
+      <label class="bk-clan-chip">
+        <input type="checkbox" value="${c.id}" ${selected.has(c.id)?'checked':''} onchange="renderManualGroupPickers()">
+        ${escapeHtml(c.tag)} — ${escapeHtml(c.name)}
+      </label>`).join('');
+  }
+  updateBracketFieldsVisibility();
+}
+function updateBracketFieldsVisibility(){
+  const system = document.getElementById('bkSystem').value;
+  document.getElementById('bkGroupSizeWrap').style.display = system === 'group_elim' ? 'flex' : 'none';
+  renderManualGroupPickers();
+}
+function renderManualGroupPickers(){
+  const wrap = document.getElementById('bkManualGroups');
+  const draw = document.getElementById('bkDraw').value;
+  const system = document.getElementById('bkSystem').value;
+  if(draw !== 'manual' || system !== 'group_elim'){ wrap.style.display='none'; wrap.innerHTML=''; return; }
+  const checked = Array.from(document.querySelectorAll('#bkClanChecklist input:checked')).map(i=>i.value);
+  if(checked.length===0){ wrap.style.display='none'; wrap.innerHTML=''; return; }
+  const groupSize = parseInt(document.getElementById('bkGroupSize').value) || 4;
+  const numGroups = Math.max(1, Math.ceil(checked.length / groupSize));
+  const groupLetters = Array.from({length:numGroups}, (_,i)=>String.fromCharCode(65+i));
+  const priorSelections = {};
+  checked.forEach(id=>{ const sel = document.getElementById('bkManualGroup_'+id); if(sel) priorSelections[id] = sel.value; });
+  wrap.style.display = 'block';
+  wrap.innerHTML = '<label class="mono" style="font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--gray-2);display:block;margin-bottom:8px;">Assign each clan to a group</label>' +
+    checked.map((id,idx)=>{
+      const c = clans.find(x=>x.id===id);
+      const defaultGroup = priorSelections[id] || groupLetters[idx % numGroups];
+      const opts = groupLetters.map(g=>`<option value="${g}" ${g===defaultGroup?'selected':''}>Group ${g}</option>`).join('');
+      return `<div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:12.5px;">
+        <span style="width:180px;">${escapeHtml(c ? c.tag+' — '+c.name : id)}</span>
+        <select id="bkManualGroup_${id}" style="padding:4px 8px; border:1px solid var(--gray-4); background:var(--bg-2); color:var(--ink);">${opts}</select>
+      </div>`;
+    }).join('');
+}
+async function generateDraw(){
+  if(!requirePermission('tournaments', 'bracketMsg')) return;
+  const system = document.getElementById('bkSystem').value;
+  const groupSize = parseInt(document.getElementById('bkGroupSize').value) || 4;
+  const drawType = document.getElementById('bkDraw').value;
+  const clanIds = Array.from(document.querySelectorAll('#bkClanChecklist input:checked')).map(i=>i.value);
+
+  if(clanIds.length < 2){ showMsg('bracketMsg','Select at least 2 clans.', false); return; }
+  if(currentBracket && currentBracket.matches && currentBracket.matches.some(m=>m.homeScore!=null)){
+    if(!confirm('This will reset the existing draw and all recorded scores. Continue?')) return;
+  }
+
+  let groups = [];
+  if(system === 'league'){
+    groups = [ clanIds.slice() ];
+    if(drawType === 'random') shuffleArray(groups[0]);
+  } else {
+    if(drawType === 'random'){
+      const shuffled = shuffleArray(clanIds.slice());
+      const numGroups = Math.max(1, Math.ceil(shuffled.length / groupSize));
+      groups = Array.from({length:numGroups}, ()=>[]);
+      shuffled.forEach((id,i)=>{ groups[i % numGroups].push(id); });
+    } else {
+      const groupsMap = {};
+      clanIds.forEach(id=>{
+        const sel = document.getElementById('bkManualGroup_'+id);
+        const g = sel ? sel.value : 'A';
+        if(!groupsMap[g]) groupsMap[g] = [];
+        groupsMap[g].push(id);
+      });
+      groups = Object.keys(groupsMap).sort().map(k=>groupsMap[k]).filter(g=>g.length>0);
+    }
+  }
+
+  let matches = [];
+  groups.forEach((groupClans, gi) => {
+    const groupLabel = system === 'league' ? null : String.fromCharCode(65+gi);
+    roundRobinFixtures(groupClans).forEach(f => {
+      matches.push({id: uid(), stage:'group', group: groupLabel, round: f.round, home: f.home, away: f.away, homeScore: null, awayScore: null});
+    });
+  });
+
+  currentBracket = {system, groupSize, drawType, clanIds, groups, matches};
+  const ok = await sSet('tbracket:'+currentBracketTid, currentBracket);
+  if(ok){
+    bkSetupForceOpen = false;
+    showMsg('bracketMsg','Draw generated.', true);
+    renderBracketSetup();
+    renderBracketView();
+    logActivity(`Generated a draw for tournament "${currentBracketName}"`);
+  } else { showMsg('bracketMsg', storageErrorMessage(), false); }
+}
+function matchRowHtml(m){
+  const editable = isMod() && hasPermission('tournaments');
+  const hScore = m.homeScore != null ? m.homeScore : '';
+  const aScore = m.awayScore != null ? m.awayScore : '';
+  return `<div class="bk-match-row">
+    <div class="bk-match-clan home">${escapeHtml(clanLabel(m.home))}</div>
+    <input class="bk-score-input" type="number" min="0" value="${hScore}" ${editable?'':'disabled'} onchange="updateMatchScore('${m.id}','home',this.value)">
+    <span class="bk-vs">–</span>
+    <input class="bk-score-input" type="number" min="0" value="${aScore}" ${editable?'':'disabled'} onchange="updateMatchScore('${m.id}','away',this.value)">
+    <div class="bk-match-clan away">${escapeHtml(clanLabel(m.away))}</div>
+  </div>`;
+}
+async function updateMatchScore(matchId, side, value){
+  if(!requirePermission('tournaments')){ renderBracketView(); return; }
+  const match = currentBracket.matches.find(m=>m.id===matchId);
+  if(!match) return;
+  const num = value === '' ? null : parseInt(value);
+  if(side==='home') match.homeScore = isNaN(num) ? null : num;
+  else match.awayScore = isNaN(num) ? null : num;
+  const ok = await sSet('tbracket:'+currentBracketTid, currentBracket);
+  if(ok){
+    renderBracketView();
+    logActivity(`Updated a match score in "${currentBracketName}"`);
+  }
+}
+async function generateKnockout(){
+  if(!requirePermission('tournaments', 'bracketMsg')) return;
+  let winners = [], runnersUp = [];
+  currentBracket.groups.forEach((groupClans, gi)=>{
+    const groupLabel = String.fromCharCode(65+gi);
+    const groupMatches = currentBracket.matches.filter(m=>m.stage==='group' && m.group===groupLabel);
+    const standings = computeStandings(groupClans, groupMatches);
+    if(standings[0]) winners.push(standings[0].clanId);
+    if(standings[1]) runnersUp.push(standings[1].clanId);
+  });
+  const qualifiers = [...winners, ...runnersUp];
+  if(qualifiers.length < 2){ showMsg('bracketMsg','Not enough qualifiers to start a knockout stage.', false); return; }
+  const n = qualifiers.length - (qualifiers.length % 2);
+  const stage = stageForCount(n);
+  const matches = [];
+  for(let i=0;i<n/2;i++){
+    matches.push({id: uid(), stage, group:null, round:1, home: qualifiers[i], away: qualifiers[n-1-i], homeScore:null, awayScore:null});
+  }
+  currentBracket.matches = currentBracket.matches.filter(m=>m.stage==='group').concat(matches);
+  const ok = await sSet('tbracket:'+currentBracketTid, currentBracket);
+  if(ok){
+    renderBracketView();
+    logActivity(`Generated knockout bracket for "${currentBracketName}"`);
+  } else { showMsg('bracketMsg', storageErrorMessage(), false); }
+}
+async function advanceKnockout(){
+  if(!requirePermission('tournaments')) return;
+  const knockoutMatches = currentBracket.matches.filter(m=>m.stage!=='group');
+  const stages = [...new Set(knockoutMatches.map(m=>m.stage))];
+  const currentStage = stages[stages.length-1];
+  const currentMatches = knockoutMatches.filter(m=>m.stage===currentStage);
+  const winners = currentMatches.map(m=> m.homeScore > m.awayScore ? m.home : m.away);
+  if(winners.length < 2) return;
+  const nextStage = stageForCount(winners.length);
+  const nextMatches = [];
+  for(let i=0;i<winners.length/2;i++){
+    nextMatches.push({id: uid(), stage: nextStage, group:null, round:1, home: winners[i*2], away: winners[i*2+1], homeScore:null, awayScore:null});
+  }
+  currentBracket.matches = currentBracket.matches.concat(nextMatches);
+  const ok = await sSet('tbracket:'+currentBracketTid, currentBracket);
+  if(ok){
+    renderBracketView();
+    logActivity(`Advanced knockout stage for "${currentBracketName}"`);
+  }
+}
+function renderBracketView(){
+  const el = document.getElementById('bracketView');
+  if(!currentBracket || !currentBracket.groups || currentBracket.groups.length===0){
+    el.innerHTML = '<div class="empty-state">No draw generated for this tournament yet.</div>';
+    return;
+  }
+  let html = '';
+
+  html += '<div class="bk-groups-grid">';
+  currentBracket.groups.forEach((groupClans, gi)=>{
+    const label = currentBracket.system === 'league' ? 'League table' : `Group ${String.fromCharCode(65+gi)}`;
+    const groupMatches = currentBracket.matches.filter(m=>m.stage==='group' && (currentBracket.system==='league' || m.group===String.fromCharCode(65+gi)));
+    const standings = computeStandings(groupClans, groupMatches);
+    html += `<div class="card bk-group-card">
+      <h4>${label}</h4>
+      <table class="bk-standings">
+        <thead><tr><th>#</th><th>Clan</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
+        <tbody>${standings.map((s,idx)=>`<tr><td class="num">${idx+1}</td><td class="clan-cell">${escapeHtml(clanLabel(s.clanId))}</td><td class="num">${s.played}</td><td class="num">${s.win}</td><td class="num">${s.draw}</td><td class="num">${s.loss}</td><td class="num">${s.gf-s.ga}</td><td class="num">${s.pts}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  });
+  html += '</div>';
+
+  html += `<div class="bk-round-label">${currentBracket.system==='league' ? 'Schedule' : 'Group stage schedule'}</div><div class="card" style="padding:18px 20px;">`;
+  const roundsMap = {};
+  currentBracket.matches.filter(m=>m.stage==='group').forEach(m=>{
+    const key = (m.group||'') + '-' + m.round;
+    if(!roundsMap[key]) roundsMap[key] = {group:m.group, round:m.round, matches:[]};
+    roundsMap[key].matches.push(m);
+  });
+  Object.values(roundsMap).sort((a,b)=> (a.group||'').localeCompare(b.group||'') || a.round-b.round).forEach(r=>{
+    html += `<div style="margin-bottom:14px;"><div class="mono" style="font-size:10px;color:var(--gray-3);margin-bottom:6px;">${r.group?'Group '+r.group+' · ':''}Round ${r.round}</div>`;
+    r.matches.forEach(m=>{ html += matchRowHtml(m); });
+    html += '</div>';
+  });
+  html += '</div>';
+
+  if(currentBracket.system === 'group_elim'){
+    const knockoutMatches = currentBracket.matches.filter(m=>m.stage!=='group');
+    const groupMatchesAll = currentBracket.matches.filter(m=>m.stage==='group');
+    const groupsComplete = groupMatchesAll.length > 0 && groupMatchesAll.every(m=>m.homeScore!=null && m.awayScore!=null);
+
+    html += '<div class="bk-round-label">Knockout stage</div><div class="card" style="padding:18px 20px;">';
+    if(knockoutMatches.length===0){
+      html += groupsComplete
+        ? `<button class="btn btn-red btn-sm mod-only" onclick="generateKnockout()">Generate knockout bracket</button>`
+        : '<div class="empty-state">Finish the group stage to unlock the knockout bracket.</div>';
+    } else {
+      const stages = [...new Set(knockoutMatches.map(m=>m.stage))];
+      stages.forEach(stage=>{
+        html += `<div class="bk-round-label" style="margin-top:0;">${stageLabel(stage)}</div>`;
+        knockoutMatches.filter(m=>m.stage===stage).forEach(m=>{ html += matchRowHtml(m); });
+      });
+      const finalMatch = knockoutMatches.find(m=>m.stage==='final');
+      if(finalMatch && finalMatch.homeScore!=null && finalMatch.awayScore!=null && finalMatch.homeScore !== finalMatch.awayScore){
+        const winner = finalMatch.homeScore > finalMatch.awayScore ? finalMatch.home : finalMatch.away;
+        html += `<div class="bk-champion" style="margin-top:20px;"><div class="trophy">🏆</div><h3>${escapeHtml(clanLabel(winner))}</h3></div>`;
+      } else {
+        const currentStage = stages[stages.length-1];
+        const currentStageMatches = knockoutMatches.filter(m=>m.stage===currentStage);
+        const stageComplete = currentStageMatches.every(m=>m.homeScore!=null && m.awayScore!=null && m.homeScore!==m.awayScore);
+        if(stageComplete && currentStage !== 'final'){
+          html += `<button class="btn btn-red btn-sm mod-only" style="margin-top:14px;" onclick="advanceKnockout()">Advance to next round</button>`;
+        }
+      }
+    }
+    html += '</div>';
+  }
+
+  html += `<div class="bk-export-row">
+    <button class="btn btn-ghost btn-sm" onclick="exportStandingsCSV()">Export standings (CSV)</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportScheduleCSV()">Export schedule (CSV)</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportScoresCSV()">Export scores (CSV)</button>
+  </div>`;
+
+  el.innerHTML = html;
+}
+function downloadCSV(filename, rows){
+  const csv = rows.map(row => row.map(cell => {
+    const s = String(cell === null || cell === undefined ? '' : cell);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+function exportStandingsCSV(){
+  if(!currentBracket) return;
+  const rows = [['Group','Rank','Clan','Played','Wins','Draws','Losses','GF','GA','GD','Points']];
+  currentBracket.groups.forEach((groupClans, gi)=>{
+    const label = currentBracket.system==='league' ? 'League' : 'Group '+String.fromCharCode(65+gi);
+    const groupMatches = currentBracket.matches.filter(m=>m.stage==='group' && (currentBracket.system==='league' || m.group===String.fromCharCode(65+gi)));
+    const standings = computeStandings(groupClans, groupMatches);
+    standings.forEach((s,idx)=>{
+      rows.push([label, idx+1, clanLabel(s.clanId), s.played, s.win, s.draw, s.loss, s.gf, s.ga, s.gf-s.ga, s.pts]);
+    });
+  });
+  downloadCSV(`${currentBracketName}-standings.csv`, rows);
+}
+function exportScheduleCSV(){
+  if(!currentBracket) return;
+  const rows = [['Stage','Group','Round','Home','Away','Home Score','Away Score']];
+  currentBracket.matches.forEach(m=>{
+    const stg = m.stage === 'group' ? 'Group stage' : stageLabel(m.stage);
+    rows.push([stg, m.group||'', m.round||'', clanLabel(m.home), clanLabel(m.away), m.homeScore ?? '', m.awayScore ?? '']);
+  });
+  downloadCSV(`${currentBracketName}-schedule.csv`, rows);
+}
+function exportScoresCSV(){
+  if(!currentBracket) return;
+  const rows = [['Stage','Group','Home','Score','Away']];
+  currentBracket.matches.filter(m=>m.homeScore!=null && m.awayScore!=null).forEach(m=>{
+    const stg = m.stage === 'group' ? 'Group stage' : stageLabel(m.stage);
+    rows.push([stg, m.group||'', clanLabel(m.home), `${m.homeScore}-${m.awayScore}`, clanLabel(m.away)]);
+  });
+  downloadCSV(`${currentBracketName}-scores.csv`, rows);
+}
+
 async function toggleTourneyOfficial(index){
   if(!requirePermission('tournaments')){ alert("You don't have permission to change a tournament's official status."); return; }
   const all = [...tourneyExtra, ...SEED_TOURNEYS.map(t=>({...t, __seed:true}))];
