@@ -1449,10 +1449,11 @@ async function submitIntro(){
 
 /* ===================== HOME: ANNOUNCEMENTS (photos/videos) ===================== */
 function mediaCardHtml(item, deleteFn){
+  const delKey = item.__id || item.id;
   if(item.type === 'text'){
     return `
       <div class="announce-card text-card">
-        <button class="announce-del" title="Remove" onclick="${deleteFn}('${item.id}')">×</button>
+        <button class="announce-del" title="Remove" onclick="${deleteFn}('${delKey}')">×</button>
         <span class="text-card-date mono">${fmtDate(item.date)}</span>
         <h4>${escapeHtml(item.caption||'Announcement')}</h4>
         <p>${escapeHtml(item.body||'')}</p>
@@ -1473,7 +1474,7 @@ function mediaCardHtml(item, deleteFn){
     <div class="announce-card">
       ${isVideo ? '<span class="play-badge">VIDEO</span>' : ''}
       ${mediaTag}
-      <button class="announce-del" title="Remove" onclick="${deleteFn}('${item.id}')">×</button>
+      <button class="announce-del" title="Remove" onclick="${deleteFn}('${delKey}')">×</button>
       <div class="announce-caption"><span>${fmtDate(item.date)}</span><h4>${escapeHtml(item.caption||'Untitled')}</h4></div>
     </div>`;
 }
@@ -1544,9 +1545,11 @@ async function submitAnnouncement(){
   }
 
   const id = uid();
+  const key = 'media:'+id;
   const item = {id, type, url:finalUrl, body:bodyText, caption, date:new Date().toISOString().slice(0,10)};
-  const ok = await sSet('media:'+id, item);
+  const ok = await sSet(key, item);
   if(ok){
+    item.__id = key;
     mediaExtra.unshift(item);
     showMsg('announceMsg','Published.', true);
     document.getElementById('annCaption').value=''; document.getElementById('annUrl').value='';
@@ -1556,11 +1559,11 @@ async function submitAnnouncement(){
     logActivity(`Published ${type} announcement: ${caption || bodyText.slice(0,40) || '(untitled)'}`);
   } else { showMsg('announceMsg', storageErrorMessage(), false); }
 }
-async function deleteAnnouncement(id){
+async function deleteAnnouncement(key){
   if(!requirePermission('media')) return;
   if(!confirm('Remove this announcement?')) return;
-  await sDelete('media:'+id);
-  mediaExtra = mediaExtra.filter(m=>m.id!==id);
+  await sDelete(key);
+  mediaExtra = mediaExtra.filter(m=>(m.__id||m.id)!==key);
   renderAnnouncements();
   logActivity('Deleted an announcement');
 }
@@ -1719,7 +1722,7 @@ async function loadTourneyPosts(tid){
   grid.innerHTML = '<div class="loader">Loading media…</div>';
   const keys = await sListKeys('tpost:'+tid+':');
   tourneyPosts = [];
-  for(const k of keys){ const v = await sGet(k); if(v) tourneyPosts.push(v); }
+  for(const k of keys){ const v = await sGet(k); if(v){ v.__id = k; tourneyPosts.push(v); } }
   tourneyPosts.sort((a,b)=> new Date(b.date)-new Date(a.date));
   renderTourneyPosts();
 }
@@ -1759,9 +1762,11 @@ async function submitTourneyPost(){
   }
 
   const id = uid();
+  const key = 'tpost:'+currentTourneyId+':'+id;
   const item = {id, type, url:finalUrl, body:bodyText, caption, date:new Date().toISOString().slice(0,10)};
-  const ok = await sSet('tpost:'+currentTourneyId+':'+id, item);
+  const ok = await sSet(key, item);
   if(ok){
+    item.__id = key;
     tourneyPosts.unshift(item);
     showMsg('tourneyPostMsg','Published.', true);
     document.getElementById('tpCaption').value=''; document.getElementById('tpUrl').value='';
@@ -1771,11 +1776,11 @@ async function submitTourneyPost(){
     logActivity(`Published ${type} media on a tournament`);
   } else { showMsg('tourneyPostMsg', storageErrorMessage(), false); }
 }
-async function deleteTourneyPost(id){
+async function deleteTourneyPost(key){
   if(!requirePermission('tournaments') || !currentTourneyId) return;
   if(!confirm('Remove this update?')) return;
-  await sDelete('tpost:'+currentTourneyId+':'+id);
-  tourneyPosts = tourneyPosts.filter(p=>p.id!==id);
+  await sDelete(key);
+  tourneyPosts = tourneyPosts.filter(p=>(p.__id||p.id)!==key);
   renderTourneyPosts();
   logActivity('Deleted tournament media');
 }
@@ -1805,7 +1810,7 @@ function renderBanned(){
   if(bannedPlayers.length===0){ grid.innerHTML = '<div class="empty-state">No banned players.</div>'; return; }
   grid.innerHTML = bannedPlayers.map(b=>`
     <div class="card banned-card">
-      <button class="banned-del" title="Remove" onclick="removeBannedPlayer('${b.id}')">×</button>
+      <button class="banned-del" title="Remove" onclick="removeBannedPlayer('${b.__id||b.id}')">×</button>
       <div class="banned-photo">${b.photo ? `<img src="${b.photo}" alt="${escapeHtml(b.name)}">` : `<div class="initial">${escapeHtml((b.name||'?').charAt(0).toUpperCase())}</div>`}</div>
       <div class="banned-info">
         <div class="name">${escapeHtml(b.name)}</div>
@@ -1836,9 +1841,11 @@ async function submitBannedPlayer(){
   }
 
   const id = uid();
+  const key = 'banned:'+id;
   const item = {id, name, phone, serial, reason, photo, date:new Date().toISOString().slice(0,10)};
-  const ok = await sSet('banned:'+id, item);
+  const ok = await sSet(key, item);
   if(ok){
+    item.__id = key;
     bannedPlayers.unshift(item);
     showMsg('bannedMsg', `${name} added to the banned list.`, true);
     ['bnName','bnPhone','bnSerial','bnReason','bnPhotoUrl'].forEach(i=>document.getElementById(i).value='');
@@ -1847,11 +1854,11 @@ async function submitBannedPlayer(){
     logActivity(`Added "${name}" to the banned players list`);
   } else { showMsg('bannedMsg', storageErrorMessage(), false); }
 }
-async function removeBannedPlayer(id){
+async function removeBannedPlayer(key){
   if(!requirePermission('banned')) return;
   if(!confirm('Remove this player from the banned list?')) return;
-  await sDelete('banned:'+id);
-  bannedPlayers = bannedPlayers.filter(b=>b.id!==id);
+  await sDelete(key);
+  bannedPlayers = bannedPlayers.filter(b=>(b.__id||b.id)!==key);
   renderBanned();
   logActivity('Removed a player from the banned list');
 }
@@ -2130,7 +2137,7 @@ async function loadAll(){
 
   const mediaKeys = await sListKeys('media:');
   mediaExtra = [];
-  for(const k of mediaKeys){ const v = await sGet(k); if(v) mediaExtra.push(v); }
+  for(const k of mediaKeys){ const v = await sGet(k); if(v){ v.__id = k; mediaExtra.push(v); } }
   mediaExtra.sort((a,b)=> new Date(b.date)-new Date(a.date));
 
   siteIntro = await sGet('site:intro');
@@ -2140,7 +2147,7 @@ async function loadAll(){
 
   const bannedKeys = await sListKeys('banned:');
   bannedPlayers = [];
-  for(const k of bannedKeys){ const v = await sGet(k); if(v) bannedPlayers.push(v); }
+  for(const k of bannedKeys){ const v = await sGet(k); if(v){ v.__id = k; bannedPlayers.push(v); } }
   bannedPlayers.sort((a,b)=> new Date(b.date)-new Date(a.date));
 
   renderNews();
